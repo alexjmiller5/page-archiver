@@ -65,7 +65,14 @@ Only public HTTP(S) destinations are allowed. The local capture proxy resolves
 and pins each connection to a public IP, including redirects and resources.
 The browser receives neither hub credentials nor a reused login profile.
 Captures are bounded by elapsed time, transfer bytes and image dimensions.
-CAPTCHA, login walls, missing resources and exceeded limits are failures.
+Recognized CAPTCHA/login walls, partial HTTP responses, missing archive resources
+and exceeded limits are failures. Loading placeholders and visibly busy content
+also fail. These checks are heuristics; success does not prove that a site supplied
+all of its content. Failed background fetch/XHR requests are counted in the manifest's
+`page_request_failures` field, since a failed metrics request can leave content intact.
+
+Large media-heavy pages can exceed the default 50 MiB artifact limit. Increase
+`max_artifact_bytes` explicitly when retaining those pages is worth the storage.
 
 A capture records what the external site serves when fetched. It cannot recover
 content that changed or disappeared before capture. Video/audio and embedded

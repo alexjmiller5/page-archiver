@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(not Path(CHROME).exists(), reason="installed Chr
 
 
 @asynccontextmanager
-async def fixture_server(monkeypatch, page):
+async def fixture_server(monkeypatch, page, status=200, resource_status=200):
     requests = []
 
     async def handle(reader, writer):
@@ -48,7 +48,7 @@ async def fixture_server(monkeypatch, page):
                 mime, body = "text/plain", "unexpected"
             data = body.encode()
             writer.write(
-                f"HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {len(data)}\r\nConnection: close\r\n\r\n".encode()
+                f"HTTP/1.1 {status if path == '/' else resource_status} Fixture\r\nContent-Type: {mime}\r\nContent-Length: {len(data)}\r\nConnection: close\r\n\r\n".encode()
                 + data
             )
             await writer.drain()
@@ -187,5 +187,60 @@ def test_browser_subresources_and_websockets_cannot_bypass_proxy(tmp_path, monke
         finally:
             server.close()
             await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "page,status,resource_status,expected",
+    [
+        ("<title>Fixture</title><body>Truncated article", 206, 200, "partial"),
+        ('<title>Fixture</title><body>Article<img src="/image.svg">', 200, 206, "partial"),
+        (
+            '<title>Fixture</title><body>Loading product details...<script>fetch("http://127.0.0.1:9/data").catch(()=>{});</script>',
+            200,
+            200,
+            "partial",
+        ),
+        (
+            '<title>Fixture</title><body><main aria-busy="true">Article</main><script>fetch("/data").catch(()=>{});</script>',
+            200,
+            500,
+            "partial",
+        ),
+        (
+            '<title>Sign in</title><body>Sign in to continue<form><input type="email"><button>Continue</button></form>',
+            200,
+            200,
+            "login_required",
+        ),
+        (
+            "<title>Sign in</title><body>Sign in to continue<button>Continue with your provider</button>",
+            200,
+            200,
+            "login_required",
+        ),
+    ],
+)
+def test_partial_pages_and_login_gates_never_publish(
+    tmp_path, monkeypatch, page, status, resource_status, expected
+):
+    async def scenario():
+        async with fixture_server(monkeypatch, page, status, resource_status) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == expected
+        assert not (tmp_path / "result").exists()
+
+    asyncio.run(scenario())
+
+
+def test_complete_page_with_failed_background_request_records_warning(tmp_path, monkeypatch):
+    async def scenario():
+        page = '<title>Article</title><body><main><h1>Complete article</h1><p>The article content is available.</p></main><script>fetch("/metrics").catch(()=>{});</script>'
+        async with fixture_server(monkeypatch, page, resource_status=500) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        assert result.page_request_failures == 1
+        assert "Complete article" in Path(result.html.path).read_text()
 
     asyncio.run(scenario())

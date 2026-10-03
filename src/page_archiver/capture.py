@@ -40,6 +40,7 @@ class Outcome(BaseModel):
     title: str | None = None
     html: Artifact | None = None
     png: Artifact | None = None
+    page_request_failures: int = 0
 
 
 @dataclass
@@ -49,6 +50,7 @@ class Rendered:
     final_url: str
     title: str
     missing_resources: int
+    page_request_failures: int = 0
 
 
 def browser_executable(settings: Settings) -> str:
@@ -69,6 +71,12 @@ def browser_executable(settings: Settings) -> str:
 
 
 def classify_page(title: str, text: str, password: bool) -> None:
+    if len(text) < 500 and re.search(
+        r"\b(loading(?:\s+(?:product|page|content|details))?|please wait|failed to load|unable to load)\b",
+        text,
+        re.I,
+    ):
+        raise CaptureFailure("partial")
     if re.search(
         r"captcha|robot check|access denied|just a moment|verify you are human|security check",
         title,
@@ -81,7 +89,10 @@ def classify_page(title: str, text: str, password: bool) -> None:
         re.I,
     ):
         raise CaptureFailure("blocked")
-    if password and re.search(r"sign[ -]?in|log[ -]?in", title, re.I):
+    if re.search(r"sign[ -]?in|log[ -]?in", title, re.I) and (
+        password
+        or (len(text) < 3000 and re.search(r"sign[ -]?in|log[ -]?in|continue with", text, re.I))
+    ):
         raise CaptureFailure("login_required")
     if not text.strip():
         raise CaptureFailure("empty")
@@ -161,6 +172,8 @@ async def _render(url: str, settings: Settings) -> Rendered:
                         validate_url(target)
                         async with semaphore, client.stream("GET", target) as response:
                             response.raise_for_status()
+                            if response.status_code == 206:
+                                raise CaptureFailure("partial")
                             data = bytearray()
                             async for chunk in response.aiter_bytes():
                                 fetched += len(chunk)
@@ -184,10 +197,34 @@ async def _render(url: str, settings: Settings) -> Rendered:
 
                 await context.expose_binding("__archiveResource", resource)
                 page = await context.new_page()
+                content_failures = []
+                pending_content = set()
+
+                def request_started(request):
+                    if request.resource_type in ("fetch", "xhr"):
+                        pending_content.add(request)
+
+                def request_failed(request):
+                    if request in pending_content:
+                        content_failures.append(True)
+                    pending_content.discard(request)
+
+                def response_received(response):
+                    if response.request.resource_type in ("fetch", "xhr") and (
+                        response.status == 206 or response.status >= 400
+                    ):
+                        content_failures.append(True)
+
+                page.on("request", request_started)
+                page.on("requestfinished", lambda request: pending_content.discard(request))
+                page.on("requestfailed", request_failed)
+                page.on("response", response_received)
                 page.set_default_timeout(15000)
                 response = await page.goto(url, wait_until="load", timeout=45000)
                 if response is None or response.status >= 400:
                     raise CaptureFailure("http_error")
+                if response.status == 206:
+                    raise CaptureFailure("partial")
                 try:
                     validate_url(page.url)
                 except ValueError:
@@ -195,6 +232,15 @@ async def _render(url: str, settings: Settings) -> Rendered:
                 if "text/html" not in response.headers.get("content-type", ""):
                     raise CaptureFailure("unsupported_content")
                 await page.evaluate("document.fonts.ready")
+                try:
+                    async with asyncio.timeout(10):
+                        while (
+                            pending_content
+                            and await page.locator('[aria-busy="true"]:visible').count()
+                        ):
+                            await asyncio.sleep(0.05)
+                except TimeoutError:
+                    raise CaptureFailure("partial") from None
                 title = await page.title()
                 classify_page(
                     title,
@@ -214,7 +260,14 @@ async def _render(url: str, settings: Settings) -> Rendered:
                 png = await page.screenshot(full_page=True, animations="disabled", timeout=15000)
                 if proxy.exhausted or fetched > 200 * 1024 * 1024:
                     raise CaptureFailure("too_large")
-                return Rendered(html, png, page.url, title, missing)
+                if await page.locator('[aria-busy="true"]:visible').count():
+                    raise CaptureFailure("partial")
+                classify_page(
+                    await page.title(),
+                    await page.locator("body").inner_text(),
+                    await page.locator("input[type=password]:visible").count() > 0,
+                )
+                return Rendered(html, png, page.url, title, missing, len(content_failures))
         finally:
             await browser.close()
 
@@ -248,6 +301,7 @@ async def capture(url: str, destination: Path, settings: Settings) -> Outcome:
             captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             final_url=rendered.final_url,
             title=rendered.title,
+            page_request_failures=rendered.page_request_failures,
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".capture-", dir=destination.parent) as temporary:
