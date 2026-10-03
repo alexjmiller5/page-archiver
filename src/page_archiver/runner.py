@@ -34,7 +34,12 @@ class Runner:
             body = await self.hub.poll(wait=wait)
             if body["subscription_id"] != subscription:
                 raise HubError("invalid_delivery", fatal=True)
-            self.store.accept_batch(body, self.settings.max_pending_jobs)
+            try:
+                self.store.accept_batch(body, self.settings.max_pending_jobs)
+            except ValueError as error:
+                if str(error) == "delivery_exceeds_queue_capacity":
+                    raise HubError("delivery_exceeds_queue_capacity", fatal=True) from None
+                raise
             pending = self.store.pending_ack(subscription)
         if pending is None:
             return False

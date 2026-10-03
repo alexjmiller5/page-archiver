@@ -257,3 +257,33 @@ def test_queued_work_from_another_subscription_is_not_published(tmp_path):
         with pytest.raises(HubError, match="wrong_subscription"):
             asyncio.run(Runner(config, store, InboxHub(store), capture_fn=forbidden).process_one())
         assert store.status()["queued"] == 1
+
+
+def test_delivery_larger_than_empty_queue_fails_with_actionable_configuration_error(tmp_path):
+    import copy
+
+    body = batch()
+    example = body["events"][0]
+    body["events"] = []
+    for i in range(1, 52):
+        event = copy.deepcopy(example)
+        event["id"] = f"event-{i}"
+        event["seq"] = str(i)
+        other = copy.deepcopy(event["changes"][0])
+        other["column"] = "second_url"
+        event["changes"].append(other)
+        body["events"].append(event)
+    body["through_seq"] = "51"
+
+    class Oversized(InboxHub):
+        async def poll(self, wait=30):
+            return body
+
+    with Store(tmp_path) as store:
+        config = settings(tmp_path)
+        config.max_pending_jobs = 100
+        hub = Oversized(store)
+        with pytest.raises(HubError, match="delivery_exceeds_queue_capacity") as failure:
+            asyncio.run(Runner(config, store, hub).intake_once())
+        assert failure.value.fatal
+        assert not store.jobs() and not store.pending_ack(config.subscription_id) and not hub.acks

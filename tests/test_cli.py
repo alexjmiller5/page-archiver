@@ -115,3 +115,67 @@ def test_watch_survives_network_outage_during_initial_session_check(monkeypatch,
     monkeypatch.setattr("page_archiver.main.retry_hub", retry)
     assert main(["watch"]) == 0
     assert calls == ["session", "session", "subscription", "watch"] and delays == [1]
+
+
+def test_run_once_drains_existing_work_under_intake_backpressure(monkeypatch, tmp_path, capsys):
+    import copy
+    from page_archiver.capture import Outcome
+    from page_archiver.runner import Runner
+    from page_archiver.state import Store
+    from test_client import settings
+    from test_publication import FakeHub
+    from test_state import batch
+
+    config = settings(state_dir=tmp_path, hub_token="fixture-secret", max_pending_jobs=100)
+    body = batch()
+    body["subscription_id"] = config.subscription_id
+    example = body["events"][0]
+    body["events"] = []
+    for i in range(1, 101):
+        event = copy.deepcopy(example)
+        event["id"] = f"event-{i}"
+        event["seq"] = str(i)
+        body["events"].append(event)
+    body["through_seq"] = "100"
+    with Store(tmp_path) as store:
+        store.accept_batch(body)
+        store.acknowledge(config.subscription_id, body["delivery_id"])
+    offered = copy.deepcopy(body)
+    offered["events"] = [copy.deepcopy(example)]
+    offered["events"][0].update(id="event-101", seq="101")
+    offered.update(delivery_id="delivery-101", through_seq="101")
+
+    class Hub(FakeHub):
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def session(self):
+            return {}
+
+        async def subscription(self):
+            return {}
+
+        async def poll(self, wait=0):
+            return offered
+
+        async def ack(self, delivery_id):
+            return "101"
+
+    async def blocked(*_):
+        return Outcome(status="blocked")
+
+    hub = Hub()
+    monkeypatch.setattr("page_archiver.main.Settings", lambda: config)
+    monkeypatch.setattr("page_archiver.main.HubClient", lambda _: hub)
+    monkeypatch.setattr(
+        "page_archiver.main.Runner", lambda s, db, h: Runner(s, db, h, capture_fn=blocked)
+    )
+    for _ in range(2):
+        assert main(["run-once"]) == 0
+    with Store(tmp_path) as store:
+        assert store.status()["failed"] == 2 and store.status()["queued"] == 99
+        assert store.status()["events"] == 101 and store.status()["pending_acks"] == 0
+    assert len(hub.metadata) == 2

@@ -169,6 +169,7 @@ class Store:
                 if pending["payload"] != payload:
                     raise ValueError("delivery payload conflict")
                 return
+            added = 0
             for event in batch.events:
                 event_json = encoded(event.model_dump())
                 old = self.db.execute(
@@ -186,6 +187,7 @@ class Store:
                 for change in event.changes:
                     if event.operation == "delete" or not change.new_value:
                         continue
+                    added += 1
                     identity = encoded([batch.subscription_id, event.id, change.column])
                     self.db.execute(
                         "INSERT INTO jobs(capture_id,subscription_id,event_id,source_column,url) VALUES (?,?,?,?,?)",
@@ -197,6 +199,8 @@ class Store:
                             change.new_value,
                         ),
                     )
+            if added > max_pending_jobs:
+                raise ValueError("delivery_exceeds_queue_capacity")
             self._check_capacity(max_pending_jobs)
             self.db.execute(
                 "INSERT INTO pending_acks VALUES (?,?,?,?)",

@@ -52,6 +52,17 @@ async def backfill(settings, store, hub) -> dict:
             ):
                 raise HubError("invalid_rows", fatal=True)
             for row in page["rows"]:
+                if (
+                    not isinstance(row.get("id"), str)
+                    or not row["id"]
+                    or any(
+                        column not in row
+                        or (row[column] is not None and not isinstance(row[column], str))
+                        for column in columns
+                    )
+                ):
+                    raise HubError("invalid_rows", fatal=True)
+            for row in page["rows"]:
                 for column in source["columns"]:
                     if store.enqueue_backfill(sub, table, row, column, settings.max_pending_jobs):
                         accepted += 1

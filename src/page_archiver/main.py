@@ -95,7 +95,12 @@ async def hub_command(args, settings):
                 await runner.run()
             else:
                 with store.runner_lock():
-                    await runner.intake_once(wait=0)
+                    try:
+                        await runner.intake_once(wait=0)
+                    except ValueError as error:
+                        if str(error) != "queue_capacity":
+                            raise
+                        store.set_runtime("intake", "queue_full")
                     await runner.process_one()
             return store.status()
 

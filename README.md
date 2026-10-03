@@ -77,6 +77,9 @@ page-archiver retrieve <attempt-id> --output ./retained-page
 `watch` long-polls for up to 30 seconds while one separate worker captures pages.
 Live jobs precede backfill. Intake commits events and a delivery receipt before
 ACK, and pauses when the local queue reaches `max_pending_jobs` (default 10,000).
+If one delivery alone exceeds the configured bound, the runner stops with
+`delivery_exceeds_queue_capacity`; raise `max_pending_jobs` and restart. The
+default 10,000 exceeds the protocol maximum of 1,600 jobs per delivery.
 Backfill checkpoints each completed page; rerunning resumes an interrupted scan,
 or starts a fresh scan after completion. Repeated observations deduplicate.
 Run it alongside the watcher so queued work can drain. A failure exits nonzero;

@@ -231,6 +231,20 @@ class HubClient:
             or (body.get("next_cursor") is not None and not isinstance(body["next_cursor"], str))
         ):
             raise HubError("invalid_rows", fatal=True)
+        for row in body["rows"]:
+            if (
+                not all(column in row for column in columns)
+                or any(
+                    value is not None and type(value) not in (str, int, float)
+                    for value in row.values()
+                )
+                or ("id" in columns and (not isinstance(row["id"], str) or not row["id"]))
+                or any(
+                    column in row and row[column] is not None and not isinstance(row[column], str)
+                    for column in ("updated_at", "hub_at", "deleted_at")
+                )
+            ):
+                raise HubError("invalid_rows", fatal=True)
         return body
 
     async def insert(self, table: str, row: dict) -> dict:

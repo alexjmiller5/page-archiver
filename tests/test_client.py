@@ -295,3 +295,37 @@ def test_ack_rows_and_insert_keep_explicit_boundaries():
         "where": {"id": "attempt-1"},
     }
     assert seen[2][1] == {"table": "captures", "columns": ["id"], "rows": [{"id": "attempt-1"}]}
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["missing_url", "missing_updated_at", "missing_hub_at", "bad_id", "bad_revision", "bad_url"],
+)
+def test_rows_reject_missing_requested_fields_and_invalid_source_types(change):
+    row = {
+        "id": "row-1",
+        "url": "https://example.test",
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "hub_at": None,
+        "deleted_at": None,
+    }
+    if change.startswith("missing_"):
+        del row[change.removeprefix("missing_")]
+    elif change == "bad_id":
+        row["id"] = None
+    elif change == "bad_revision":
+        row["updated_at"] = {"not": "a timestamp"}
+    else:
+        row["url"] = ["https://example.test"]
+
+    async def check():
+        async with HubClient(
+            settings(hub_token="fixture-secret"),
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(200, json={"rows": [row], "next_cursor": None})
+            ),
+        ) as hub:
+            with pytest.raises(HubError, match="invalid_rows"):
+                await hub.rows("articles", ["id", "url", "updated_at", "hub_at", "deleted_at"])
+
+    run(check)
