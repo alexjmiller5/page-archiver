@@ -247,7 +247,9 @@ async def _render(url: str, settings: Settings) -> Rendered:
                     await page.locator("body").inner_text(),
                     await page.locator("input[type=password]:visible").count() > 0,
                 )
-                await page.add_script_tag(path=str(asset))
+                # Automation evaluates our serializer without relaxing the site's
+                # CSP for its own scripts or inserting an inline script element.
+                await page.evaluate(asset.read_text())
                 html = await page.evaluate("globalThis.__archivePage()")
                 dimensions = await page.evaluate(
                     "({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})"

@@ -244,3 +244,15 @@ def test_complete_page_with_failed_background_request_records_warning(tmp_path, 
         assert "Complete article" in Path(result.html.path).read_text()
 
     asyncio.run(scenario())
+
+
+def test_capture_strict_csp_without_enabling_site_inline_scripts(tmp_path, monkeypatch):
+    async def scenario():
+        page = """<!doctype html><meta http-equiv="Content-Security-Policy" content="script-src 'none'"><title>CSP fixture</title><body><h1>Public article</h1><script>document.querySelector('h1').textContent='Unwanted inline script';</script>"""
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        assert "Public article" in Path(result.html.path).read_text()
+        assert "Unwanted inline script" not in Path(result.html.path).read_text()
+
+    asyncio.run(scenario())
