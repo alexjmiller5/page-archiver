@@ -1,0 +1,36 @@
+diff --git a/node_modules/single-file-core/.bun-tag-d09898f6a7ba2bad b/.bun-tag-d09898f6a7ba2bad
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/core/helper.js b/core/helper.js
+index 9bf1070793927c516d03012f101786332ab1901c..4a753937996fbd109da158bdd3b8a49d4333d8fb 100644
+--- a/core/helper.js
++++ b/core/helper.js
+@@ -417,8 +417,8 @@ function markInvalidNestingInRoot(doc, root, rootTrackId, getContent) {
+ 	});
+ 	droppedElements.forEach(element => {
+ 		const id = element.getAttribute(NESTING_TRACK_ID_ATTRIBUTE_NAME);
+-		element.prepend(doc.createComment(NESTING_START_MARKER + id));
+-		element.append(doc.createComment(NESTING_END_MARKER + id));
++		Element.prototype.prepend.call(element, doc.createComment(NESTING_START_MARKER + id));
++		Element.prototype.append.call(element, doc.createComment(NESTING_END_MARKER + id));
+ 	});
+ 	setNestingMarkersData(root);
+ 	if (rootTrackId) {
+@@ -457,7 +457,7 @@ function markInvalidNestingInRoot(doc, root, rootTrackId, getContent) {
+ 	}
+ 
+ 	function testDroppedElement(element) {
+-		if (element.namespaceURI != HTML_NAMESPACE) {
++		if (element.namespaceURI != HTML_NAMESPACE || RAW_TEXT_TAG_NAMES.includes(element.tagName.toUpperCase())) {
+ 			return false;
+ 		}
+ 		let ancestor = element.parentElement;
+@@ -628,7 +628,7 @@ function fixInvalidNesting(document, NESTING_TRACK_ID_ATTRIBUTE_NAME, preventCle
+ 					if (originalElement.contains(element)) {
+ 						element.replaceWith(...element.childNodes);
+ 					} else {
+-						originalElement.append(...element.childNodes);
++						Element.prototype.append.call(originalElement, ...element.childNodes);
+ 						element.remove();
+ 					}
+ 				}

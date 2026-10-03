@@ -1,0 +1,11 @@
+{
+  "name": "page-archiver-browser",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "dependencies": {
+    "single-file-core": "1.6.22"
+  },
+  "patchedDependencies": {
+    "single-file-core@1.6.22": "patches/single-file-core-1.6.22.patch"
+  }
+}

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.env
+.env.*
+!.env.tpl
+node_modules/
+dist/
+result
+.superpowers/
+.worktrees/
+src/page_archiver/assets/*

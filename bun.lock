@@ -1,0 +1,18 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "page-archiver-browser",
+      "dependencies": {
+        "single-file-core": "1.6.22",
+      },
+    },
+  },
+  "patchedDependencies": {
+    "single-file-core@1.6.22": "patches/single-file-core-1.6.22.patch",
+  },
+  "packages": {
+    "single-file-core": ["single-file-core@1.6.22", "", {}, "sha512-e49IxLMaChJYha9uVyhxJNVL7ABoGHGm+U2fhnVWBZhzqMto5pP0X9QcLmqF8b46+ixvHFkvB8VPTECEw2vVWA=="],
+  }
+}
