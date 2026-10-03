@@ -186,3 +186,36 @@ def test_manifest_cannot_publish_escaped_or_incomplete_artifacts(tmp_path, chang
     with pytest.raises(HubError, match="staged_artifact_mismatch"):
         asyncio.run(publish_attempt(hub, settings, job, attempt, outcome))
     assert not hub.files and not hub.metadata
+
+
+def test_metadata_matches_shared_client_fixture(tmp_path):
+    from page_archiver.publication import metadata
+
+    contract = json.loads((Path(__file__).parent / "fixtures/capture-metadata-v1.json").read_text())
+    expected = contract["success"]
+    config = Settings(state_dir=tmp_path, capture_table="captures", artifact_prefix="captures/")
+    job = {k: expected[k] for k in ("capture_id", "event_id", "subscription_id", "source_column")}
+    job["url"] = expected["source_url"]
+    job["source"] = {
+        "table": "articles",
+        "row_id": "source-1",
+        "after_revision": {
+            "updated_at": "2026-01-01T00:00:00.000Z",
+            "hub_at": "2026-01-01T00:00:00.001Z",
+        },
+    }
+    attempt = {"id": expected["id"], "started_at": "2026-01-01T00:00:01.000000+00:00"}
+    outcome = Outcome(
+        status="succeeded",
+        captured_at="2026-01-01T00:00:02.000000Z",
+        html=Artifact(
+            path="unused",
+            mime="text/html",
+            bytes=17,
+            sha256="74c7835231c92b40bf6415ed21bb8e9cacfb624f16b8a15510a3984874594aa6",
+        ),
+        png=Artifact(path="unused", mime="image/png", bytes=100, sha256="a" * 64),
+    )
+    assert metadata(config, job, attempt, outcome) == expected
+    failed = metadata(config, job, attempt, Outcome(status="login_required"))
+    assert {k: failed[k] for k in contract["failure_fields"]} == contract["failure_fields"]

@@ -1,6 +1,8 @@
 """Bounded hub API transport. Credentials never leave the configured origin."""
 
 import asyncio
+import hashlib
+import os
 import json
 import re
 import subprocess
@@ -296,3 +298,61 @@ class HubClient:
         ):
             raise HubError("unverified_artifact", fatal=True)
         return {"mime": mime, "bytes": int(length), "sha256": checksum, "etag": headers.get("ETag")}
+
+    async def download(self, key: str, path: Path, expected: dict) -> None:
+        if (
+            expected.get("mime") not in {"text/html", "image/png"}
+            or type(expected.get("bytes")) is not int
+            or not 0 < expected["bytes"] <= self.settings.max_artifact_bytes
+            or not isinstance(expected.get("sha256"), str)
+            or re.fullmatch(r"[a-f0-9]{64}", expected["sha256"]) is None
+        ):
+            raise HubError("invalid_artifact_metadata", fatal=True)
+        file_path = self.file_path(key)
+        assert self.client is not None
+        try:
+            output = path.open("xb")
+        except FileExistsError:
+            raise HubError("destination_exists", fatal=True) from None
+        try:
+            os.chmod(path, 0o600)
+            async with asyncio.timeout(180), self.client.stream("GET", file_path) as response:
+                if 300 <= response.status_code < 400:
+                    raise HubError("redirect_refused", fatal=True)
+                if response.status_code in (401, 403):
+                    raise HubError("credential_rejected", fatal=True)
+                if response.status_code == 429:
+                    raise HubError("hub_capped", retry_delay(response.headers))
+                if response.status_code >= 500:
+                    raise HubError("hub_unavailable")
+                if response.status_code != 200:
+                    raise HubError("artifact_unavailable", fatal=True)
+                if (
+                    response.headers.get("Content-Type") != expected["mime"]
+                    or response.headers.get("X-Content-SHA256") != expected["sha256"]
+                    or (
+                        response.headers.get("Content-Length") is not None
+                        and response.headers["Content-Length"] != str(expected["bytes"])
+                    )
+                ):
+                    raise HubError("artifact_conflict", fatal=True)
+                size = 0
+                checksum = hashlib.sha256()
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > expected["bytes"]:
+                        raise HubError("artifact_conflict", fatal=True)
+                    output.write(chunk)
+                    checksum.update(chunk)
+                if size != expected["bytes"] or checksum.hexdigest() != expected["sha256"]:
+                    raise HubError("artifact_conflict", fatal=True)
+                output.flush()
+                os.fsync(output.fileno())
+        except BaseException as error:
+            output.close()
+            path.unlink(missing_ok=True)
+            if isinstance(error, (httpx.HTTPError, OSError, TimeoutError)):
+                raise HubError("hub_unavailable") from None
+            raise
+        finally:
+            output.close()

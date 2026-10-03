@@ -30,7 +30,7 @@ are not a runtime deployment.
 
 ## Plans
 
-The generic architecture is docs/design.md. The current capture-foundation plan
-is docs/superpowers/plans/2026-10-03-capture-foundation.md. Later hub changes use the
-hub's canonical fixtures and generated contracts. Do not pretend unfinished routes
+The generic architecture is docs/design.md; the consumer contract is docs/hub-setup.md.
+The runner plan is docs/superpowers/plans/2026-10-03-durable-runner.md. Hub changes
+use the hub's canonical fixtures and generated contracts. Do not pretend unfinished routes
 or a future Life UI viewer have shipped.

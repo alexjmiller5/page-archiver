@@ -315,3 +315,17 @@ except RuntimeError:
             check=True,
         )
         assert result.stdout.strip() == "acquired"
+
+
+def test_consumer_identity_prevents_republishing_into_a_different_service(tmp_path):
+    with Store(tmp_path) as store:
+        store.bind_consumer("https://hub.test", "subscription-1", "captures", "captures/")
+    with Store(tmp_path) as store:
+        store.bind_consumer("https://hub.test", "subscription-1", "captures", "captures/")
+        for changed in [
+            ("https://other.test", "subscription-1", "captures", "captures/"),
+            ("https://hub.test", "subscription-1", "other", "captures/"),
+            ("https://hub.test", "subscription-1", "captures", "other/"),
+        ]:
+            with pytest.raises(ValueError, match="consumer_configuration_changed"):
+                store.bind_consumer(*changed)

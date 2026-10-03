@@ -114,6 +114,7 @@ class Store:
             CREATE UNIQUE INDEX IF NOT EXISTS one_active_attempt ON attempts((1))
                 WHERE published_at IS NULL;
             CREATE TABLE IF NOT EXISTS runtime_status(component TEXT PRIMARY KEY, code TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS consumer_identity (id INTEGER PRIMARY KEY CHECK(id=1), configuration TEXT NOT NULL);
             COMMIT;
         """)
         with self.transaction():
@@ -348,13 +349,19 @@ class Store:
         row: dict,
         column: str,
         max_pending_jobs: int = 10_000,
+        *,
+        observation_id: str | None = None,
     ) -> str | None:
         url = row.get(column)
         if row.get("deleted_at") or not url:
             return None
         revision = {"updated_at": row.get("updated_at"), "hub_at": row.get("hub_at")}
         identity = encoded([subscription_id, table, row["id"], column, url, revision])
-        event_id = "backfill:" + str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
+        event_id = (
+            ("recapture:" + observation_id)
+            if observation_id
+            else "backfill:" + str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
+        )
         capture_id = str(
             uuid.uuid5(uuid.NAMESPACE_URL, encoded([subscription_id, event_id, column]))
         )
@@ -384,6 +391,16 @@ class Store:
             )
             self._check_capacity(max_pending_jobs)
         return capture_id
+
+    def bind_consumer(self, hub_url, subscription_id, capture_table, artifact_prefix) -> None:
+        identity = encoded([hub_url, subscription_id, capture_table, artifact_prefix])
+        with self.transaction():
+            previous = self.db.execute(
+                "SELECT configuration FROM consumer_identity WHERE id=1"
+            ).fetchone()
+            if previous and previous[0] != identity:
+                raise ValueError("consumer_configuration_changed")
+            self.db.execute("INSERT OR IGNORE INTO consumer_identity VALUES (1,?)", (identity,))
 
     def set_runtime(self, component: str, code: str) -> None:
         if (

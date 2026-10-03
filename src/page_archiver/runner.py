@@ -18,6 +18,12 @@ class Runner:
     def __init__(
         self, settings: Settings, store: Store, hub, *, capture_fn=capture, sleep=asyncio.sleep
     ):
+        store.bind_consumer(
+            settings.hub_url,
+            settings.subscription_id,
+            settings.capture_table,
+            settings.artifact_prefix,
+        )
         self.settings, self.store, self.hub = settings, store, hub
         self.capture_fn, self.sleep = capture_fn, sleep
 
@@ -44,8 +50,12 @@ class Runner:
             job = self.store.next_job()
             if job is None:
                 return False
+            if job["subscription_id"] != self.settings.subscription_id:
+                raise HubError("wrong_subscription", fatal=True)
             attempt = self.store.begin_attempt(job["capture_id"])
         job = self.store.job(attempt["capture_id"])
+        if job["subscription_id"] != self.settings.subscription_id:
+            raise HubError("wrong_subscription", fatal=True)
         directory = self.settings.state_dir / "spool" / attempt["id"]
         if attempt["outcome"] is not None:
             outcome = Outcome.model_validate(attempt["outcome"])
@@ -83,25 +93,12 @@ class Runner:
             raise HubError("invalid_staged_manifest", fatal=True) from None
 
     async def loop(self, component: str, action) -> None:
-        backoff = 1
         while True:
             try:
-                worked = await action()
+                worked = await retry_hub(action, self.store, component, sleep=self.sleep)
                 self.store.set_runtime(component, "ready" if worked else "waiting")
-                backoff = 1
                 if not worked:
                     await self.sleep(1)
-            except HubError as error:
-                self.store.set_runtime(component, error.code)
-                if error.fatal:
-                    raise
-                delay = (
-                    min(3600, max(1, error.retry_after))
-                    if error.retry_after is not None
-                    else random.uniform(1, backoff)
-                )
-                await self.sleep(delay)
-                backoff = min(60, backoff * 2)
             except ValueError as error:
                 if str(error) != "queue_capacity":
                     self.store.set_runtime(component, "local_state_conflict")
@@ -121,3 +118,21 @@ class Runner:
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def retry_hub(action, store: Store, component: str, *, sleep=asyncio.sleep):
+    backoff = 1
+    while True:
+        try:
+            return await action()
+        except HubError as error:
+            store.set_runtime(component, error.code)
+            if error.fatal:
+                raise
+            delay = (
+                min(3600, max(1, error.retry_after))
+                if error.retry_after is not None
+                else random.uniform(1, backoff)
+            )
+            await sleep(delay)
+            backoff = min(60, backoff * 2)

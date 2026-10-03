@@ -3,10 +3,10 @@
 Capture a public web page as self-contained HTML and a full-page PNG, with a
 manifest containing MIME types, byte counts and SHA-256 checksums. No analytics.
 
-The current CLI supports one-shot captures and local queue status. Durable hub
-subscriptions, upload, background operation and backfill are in development.
-The [design](docs/design.md) describes that integration; those routes and the
-future capture viewer are not part of this release.
+The CLI supports individual captures and a durable outbound Life Data subscription
+consumer. It stores a recoverable local queue and publishes immutable files plus
+capture metadata. Hub setup is described in [the contract](docs/hub-setup.md).
+The future capture viewer is separate work.
 
 ## Install and capture
 
@@ -55,9 +55,73 @@ Home Manager can install the package and generate the same configuration:
 }
 ```
 
-Credentials must never be put in Nix settings or a repository. Future hub
-integration uses its own independently revocable consumer credential; a table
-read grant never grants file access.
+## Background operation
+
+Configure an HTTPS hub origin, `subscription_id`, `capture_table` and
+`artifact_prefix`, plus either `PAGE_ARCHIVER_HUB_TOKEN` from your process's secure
+environment or `credential_command`, an array of executable and arguments. The
+command prints the independently minted consumer token and runs once at startup.
+Use an absolute executable path for background services. Its secure-storage
+access and environment must be configured independently of your interactive shell.
+Never put the token in config.json, Nix, source control or command-line arguments.
+
+```sh
+page-archiver watch
+page-archiver backfill
+page-archiver status
+page-archiver run-once
+page-archiver retry <capture-id>
+page-archiver retrieve <attempt-id> --output ./retained-page
+```
+
+`watch` long-polls for up to 30 seconds while one separate worker captures pages.
+Live jobs precede backfill. Intake commits events and a delivery receipt before
+ACK, and pauses when the local queue reaches `max_pending_jobs` (default 10,000).
+Backfill checkpoints each completed page; rerunning resumes an interrupted scan,
+or starts a fresh scan after completion. Repeated observations deduplicate.
+Run it alongside the watcher so queued work can drain. A failure exits nonzero;
+rerun after resolving the reported code. `run-once` performs one intake and one
+capture without becoming a service.
+
+The Home Manager module owns the service definition:
+
+```nix
+programs.page-archiver = {
+  enable = true;
+  service.enable = true;
+  settings = {
+    hub_url = "https://hub.example.test";
+    subscription_id = "<subscription-id>";
+    capture_table = "captures";
+    artifact_prefix = "captures/";
+    credential_command = [ "/path/to/secure-credential-reader" ];
+  };
+};
+```
+
+The service executes the Nix package. Nonsecret environment preparation belongs
+in `service.environment`. macOS uses launchd; Linux uses a user systemd service.
+On macOS the job starts in the user's GUI domain, where the browser is available.
+Network failures retry inside the process. Authentication or integrity failures
+halt with a stable status code and exit 78; repair the credential/configuration
+and restart the service through the host's service manager. `status` is offline
+and does not fetch credentials. Service startup failures also return a sanitized
+JSON error on standard output. macOS service output is in
+`~/Library/Logs/page-archiver.log`; Linux uses the user journal.
+
+Rotation means updating this consumer's secure credential, restarting it, then
+revoking its old token through the hub. On a replacement machine, enroll a new
+independent consumer credential. Preserve the private state directory if continuing
+the same queue: SQLite, WAL and spool together, with the service stopped. A new
+empty queue cannot recover already ACKed work by polling. Keep the old state for
+reconciliation, inspect retained metadata, and explicitly backfill or recapture
+missing observations. Do not reuse a state directory for a different hub,
+subscription, table or artifact prefix.
+
+Retrieval checks independent file authorization and verifies actual downloaded
+bytes against metadata. It requires a new output directory, writes HTML, PNG and
+metadata, and never opens HTML automatically. Retained files remain in the hub
+when the runner is disabled or its local staged bytes are cleaned up.
 
 ## Capture boundaries
 

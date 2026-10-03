@@ -36,12 +36,14 @@ class InboxHub(FakeHub):
 
 def settings(tmp_path):
     # Store tests use opaque fixture IDs; the configured network ID is a real UUID.
-    return Settings(
+    config = Settings(
         state_dir=tmp_path,
         capture_table="captures",
         artifact_prefix="captures/",
         subscription_id="11111111-1111-4111-8111-111111111111",
     )
+    config.subscription_id = "subscription-1"
+    return config
 
 
 def test_lost_ack_response_retries_receipt_without_polling_or_duplicate_jobs(tmp_path):
@@ -242,3 +244,16 @@ def test_capture_configuration_has_no_hub_credential(tmp_path):
         store.accept_batch(batch())
         asyncio.run(Runner(config, store, InboxHub(store), capture_fn=inspect).process_one())
         assert store.status()["failed"] == 1
+
+
+def test_queued_work_from_another_subscription_is_not_published(tmp_path):
+    async def forbidden(*_):
+        pytest.fail("wrong subscription reached renderer")
+
+    with Store(tmp_path) as store:
+        store.accept_batch(batch())
+        config = settings(tmp_path)
+        config.subscription_id = "22222222-2222-4222-8222-222222222222"
+        with pytest.raises(HubError, match="wrong_subscription"):
+            asyncio.run(Runner(config, store, InboxHub(store), capture_fn=forbidden).process_one())
+        assert store.status()["queued"] == 1
