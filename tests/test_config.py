@@ -59,3 +59,19 @@ def test_config_file_settings_with_environment_override(tmp_path, monkeypatch):
     settings = Settings()
     assert settings.capture_timeout == 45
     assert settings.max_artifact_bytes == 2048
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"subscription_id": "../unexpected"},
+        {"capture_table": "rows; SELECT 1"},
+        {"artifact_prefix": "captures"},
+        {"artifact_prefix": "captures/../"},
+        {"artifact_prefix": "captures/%2f/"},
+        {"artifact_prefix": "captures//"},
+    ],
+)
+def test_hub_selectors_and_key_prefixes_are_canonical(settings):
+    with pytest.raises(ValueError):
+        Settings(**settings)

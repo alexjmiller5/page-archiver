@@ -1,6 +1,7 @@
 """Portable, side-effect-free runtime configuration."""
 
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -22,6 +23,10 @@ class Settings(BaseSettings):
     hub_url: str | None = None
     hub_token: SecretStr | None = Field(default=None, exclude=True)
     credential_command: list[str] | None = None
+    subscription_id: str | None = None
+    capture_table: str | None = None
+    artifact_prefix: str | None = None
+    max_pending_jobs: int = Field(default=10_000, ge=100, le=1_000_000)
     browser_executable: Path | None = None
     capture_timeout: int = Field(default=90, ge=1, le=600)
     max_artifact_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=250 * 1024 * 1024)
@@ -63,3 +68,33 @@ class Settings(BaseSettings):
         ):
             raise ValueError("hub_url must be an HTTPS origin without credentials")
         return value.rstrip("/")
+
+    @field_validator("subscription_id")
+    @classmethod
+    def valid_subscription(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value
+        ):
+            raise ValueError("subscription_id must be a canonical hub subscription ID")
+        return value
+
+    @field_validator("capture_table")
+    @classmethod
+    def valid_table(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", value):
+            raise ValueError("capture_table must be a canonical table identifier")
+        return value
+
+    @field_validator("artifact_prefix")
+    @classmethod
+    def valid_prefix(cls, value: str | None) -> str | None:
+        if value is not None and (
+            not value.endswith("/")
+            or value == "/"
+            or "%" in value
+            or "\\" in value
+            or any(ord(c) < 32 or ord(c) == 127 for c in value)
+            or any(p in ("", ".", "..") for p in value[:-1].split("/"))
+        ):
+            raise ValueError("artifact_prefix must be a canonical key prefix ending in slash")
+        return value

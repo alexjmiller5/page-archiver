@@ -61,23 +61,30 @@
           environment = (mkPythonSet pkgs).mkVirtualEnv "page-archiver-env" workspace.deps.default;
         in
         {
-          default = pkgs.symlinkJoin {
-            name = "page-archiver";
-            paths = [ environment ];
+          default = pkgs.runCommand "page-archiver" {
             nativeBuildInputs = [ pkgs.makeWrapper ];
-            postBuild = ''
-              wrapProgram $out/bin/page-archiver \
-                --set PLAYWRIGHT_NODEJS_PATH ${pkgs.nodejs}/bin/node \
-                ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--set-default PAGE_ARCHIVER_BROWSER_EXECUTABLE ${pkgs.chromium}/bin/chromium"}
-            '';
             meta = {
               description = "Self-contained web page and screenshot capture";
               license = lib.licenses.agpl3Plus;
               mainProgram = "page-archiver";
               platforms = systems;
             };
-          };
+          } ''
+            mkdir -p $out/bin
+            makeWrapper ${environment}/bin/page-archiver $out/bin/page-archiver \
+              --set PLAYWRIGHT_NODEJS_PATH ${pkgs.nodejs}/bin/node \
+              ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--set-default PAGE_ARCHIVER_BROWSER_EXECUTABLE ${pkgs.chromium}/bin/chromium"}
+          '';
+
         });
+
+      checks = forAllSystems (pkgs: {
+        install = pkgs.buildEnv {
+          name = "page-archiver-install-check";
+          paths = [ self.packages.${pkgs.stdenv.hostPlatform.system}.default pkgs.python314 ];
+          pathsToLink = [ "/bin" ];
+        };
+      });
 
       homeModules.default = import ./nix/home-manager.nix self;
 
