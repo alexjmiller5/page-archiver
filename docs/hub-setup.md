@@ -2,9 +2,9 @@
 
 The hub must implement `row_api: v1`, `subscriptions: durable-pull-v1` and
 `files: opaque-key-v1`. Page Archiver is a direct API consumer; it never enrolls
-as a schema-replaying replica. The hub implementation is proposed in
-[Life Data PR #5](https://github.com/alexjmiller5/life-data/pull/5).
-These additions require deployment before a production runner can connect.
+as a schema-replaying replica. The canonical protocol fixtures live in
+[Life Data](https://github.com/alexjmiller5/life-data/tree/main/tests/fixtures).
+Check the hub session capabilities before connecting a production runner.
 
 An operator creates the table and catalog through the installed Life CLI,
 activates a subscription, and independently mints the consumer credential.

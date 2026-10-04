@@ -112,6 +112,13 @@ and does not fetch credentials. Service startup failures also return a sanitized
 JSON error on standard output. macOS service output is in
 `~/Library/Logs/page-archiver.log`; Linux uses the user journal.
 
+On macOS, a credential command can read an independently enrolled generic
+password with `/usr/bin/security find-generic-password -s <service> -a <account> -w`.
+Enroll through the desktop session using the hub token API and native Keychain;
+pass the issued token to `security -i` through stdin, never an argument or file.
+An SSH session may be unable to access the login Keychain even when the GUI
+launchd service can. Verify enrollment in the service's actual launch context.
+
 Rotation means updating this consumer's secure credential, restarting it, then
 revoking its old token through the hub. On a replacement machine, enroll a new
 independent consumer credential. Preserve the private state directory if continuing
