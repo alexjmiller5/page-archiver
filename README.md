@@ -144,6 +144,9 @@ and exceeded limits are failures. Loading placeholders and visibly busy content
 also fail. These checks are heuristics; success does not prove that a site supplied
 all of its content. Failed background fetch/XHR requests are counted in the manifest's
 `page_request_failures` field, since a failed metrics request can leave content intact.
+Unused CSS rules are removed before fetching their assets, so missing images used
+only by absent elements do not invalidate a complete page. Missing retained images
+and styles still fail the capture.
 
 Large media-heavy pages can exceed the default 50 MiB artifact limit. Increase
 `max_artifact_bytes` explicitly when retaining those pages is worth the storage.

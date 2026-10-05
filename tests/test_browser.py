@@ -256,3 +256,39 @@ def test_capture_strict_csp_without_enabling_site_inline_scripts(tmp_path, monke
         assert "Unwanted inline script" not in Path(result.html.path).read_text()
 
     asyncio.run(scenario())
+
+
+def test_unused_styles_do_not_make_complete_article_partial(tmp_path, monkeypatch):
+    async def scenario():
+        page = "<title>Article</title><style>.absent-signup-alert { background-image: url(/missing.svg) } h1 { color: rgb(10, 20, 30) }</style><body><h1>Complete public article</h1>"
+        async with fixture_server(monkeypatch, page, resource_status=404) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        html = Path(result.html.path).read_text()
+        assert "Complete public article" in html
+        assert "missing.svg" not in html
+        async with async_playwright() as driver:
+            browser = await driver.chromium.launch(executable_path=CHROME)
+            try:
+                context = await browser.new_context(offline=True, java_script_enabled=False)
+                saved = await context.new_page()
+                await saved.goto(Path(result.html.path).as_uri())
+                assert (
+                    await saved.locator("h1").evaluate("e => getComputedStyle(e).color")
+                    == "rgb(10, 20, 30)"
+                )
+            finally:
+                await browser.close()
+
+    asyncio.run(scenario())
+
+
+def test_missing_visible_image_still_rejects_capture(tmp_path, monkeypatch):
+    async def scenario():
+        page = '<title>Article</title><body><h1>Public article</h1><img src="/missing.svg">'
+        async with fixture_server(monkeypatch, page, resource_status=404) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "partial"
+        assert not (tmp_path / "result").exists()
+
+    asyncio.run(scenario())

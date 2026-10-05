@@ -23,7 +23,7 @@ globalThis.__archivePage = async () => {
     blockVideos: true,
     blockAudios: true,
     removeHiddenElements: true,
-    removeUnusedStyles: false,
+    removeUnusedStyles: true,
     removeUnusedFonts: true,
     removeAlternativeImages: true,
     removeAlternativeFonts: true,
