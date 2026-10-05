@@ -292,3 +292,41 @@ def test_missing_visible_image_still_rejects_capture(tmp_path, monkeypatch):
         assert not (tmp_path / "result").exists()
 
     asyncio.run(scenario())
+
+
+def test_article_discussing_captchas_is_not_a_bot_wall(tmp_path, monkeypatch):
+    async def scenario():
+        page = (
+            "<title>Repository: CAPTCHA testing library</title><body><h1>Documentation</h1>"
+            + "<p>Detailed documentation about browser testing.</p>" * 100
+        )
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+
+    asyncio.run(scenario())
+
+
+def test_delayed_article_content_is_allowed_to_render(tmp_path, monkeypatch):
+    async def scenario():
+        page = '<title>Article</title><body><script>setTimeout(() => document.body.insertAdjacentHTML("beforeend", "<h1>Loaded article</h1>"), 500)</script>'
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        assert "Loaded article" in Path(result.html.path).read_text()
+
+    asyncio.run(scenario())
+
+
+def test_trusted_types_site_captures_without_relaxing_site_policy(tmp_path, monkeypatch):
+    async def scenario():
+        page = """<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types 'none'; script-src 'nonce-fixture'"><title>Article</title><body><h1>Protected article</h1><p id="nested"></p><img src="/image.svg"><script nonce="fixture">const nested = document.createElement('div'); nested.textContent = 'Nested content'; document.getElementById('nested').appendChild(nested);</script><script>document.querySelector('h1').textContent='Unwanted script';</script>"""
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        html = Path(result.html.path).read_text()
+        assert "Protected article" in html
+        assert "Unwanted script" not in html
+        assert "data:image/svg+xml" in html
+
+    asyncio.run(scenario())

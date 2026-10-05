@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -77,7 +78,7 @@ def classify_page(title: str, text: str, password: bool) -> None:
         re.I,
     ):
         raise CaptureFailure("partial")
-    if re.search(
+    if len(text) < 3000 and re.search(
         r"captcha|robot check|access denied|just a moment|verify you are human|security check",
         title,
         re.I,
@@ -96,6 +97,89 @@ def classify_page(title: str, text: str, password: bool) -> None:
         raise CaptureFailure("login_required")
     if not text.strip():
         raise CaptureFailure("empty")
+
+
+async def serialize(page, script: str, resource) -> str:
+    """Run the serializer in its own world without changing the site's CSP."""
+    session = await page.context.new_cdp_session(page)
+    tasks = set()
+    try:
+        frame = (await session.send("Page.getFrameTree"))["frameTree"]["frame"]["id"]
+        world = await session.send(
+            "Page.createIsolatedWorld", {"frameId": frame, "worldName": "page-archiver"}
+        )
+        context_id = world["executionContextId"]
+
+        async def evaluate(expression):
+            result = await session.send(
+                "Runtime.evaluate",
+                {
+                    "expression": expression,
+                    "contextId": context_id,
+                    "awaitPromise": True,
+                    "returnByValue": True,
+                },
+            )
+            if "exceptionDetails" in result:
+                raise CaptureFailure("browser_error")
+            return result["result"].get("value")
+
+        async def respond(event):
+            request = json.loads(event["payload"])
+            try:
+                value = await resource(None, request["url"])
+            except RuntimeError:
+                value = None
+            await evaluate(f"globalThis.__archiveReply({request['id']},{json.dumps(value)})")
+
+        def received(event):
+            if event["executionContextId"] == context_id and event["name"] == "__archiveSend":
+                task = asyncio.create_task(respond(event))
+                tasks.add(task)
+
+        session.on("Runtime.bindingCalled", received)
+        await session.send(
+            "Runtime.addBinding", {"name": "__archiveSend", "executionContextName": "page-archiver"}
+        )
+        await evaluate("""(() => {
+          // Scripts are excluded from retained output; remove them before the
+          // serializer tries to normalize their text through TrustedScript sinks.
+          document.querySelectorAll('script').forEach(element => element.remove());
+          // Only this isolated world's parser changes. The site's policy and
+          // parser remain untouched. The safe HTML sink removes scripts and
+          // handlers without needing a permissive Trusted Types policy.
+          globalThis.DOMParser = class extends DOMParser {
+            parseFromString(content, type) {
+              try { return super.parseFromString(content, type); }
+              catch (error) {
+                if (!(error instanceof TypeError) || type !== 'text/html' ||
+                    typeof Element.prototype.setHTML !== 'function') throw error;
+                const doc = document.implementation.createHTMLDocument('');
+                doc.documentElement.setHTML(String(content), {
+                  sanitizer: {removeElements: ['script']}
+                });
+                return doc;
+              }
+            }
+          };
+          const pending = new Map(); let next = 0;
+          globalThis.__archiveResource = url => new Promise((resolve, reject) => {
+            const id = ++next; pending.set(id, {resolve, reject});
+            globalThis.__archiveSend(JSON.stringify({id, url}));
+          });
+          globalThis.__archiveReply = (id, value) => {
+            const request = pending.get(id); pending.delete(id);
+            if (value === null) request.reject(new Error('resource_unavailable'));
+            else request.resolve(value);
+          };
+        })()""")
+        await evaluate(script)
+        return await evaluate("globalThis.__archivePage()")
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await session.detach()
 
 
 async def _render(url: str, settings: Settings) -> Rendered:
@@ -195,7 +279,6 @@ async def _render(url: str, settings: Settings) -> Rendered:
                         missing += 1
                         raise RuntimeError("resource_unavailable") from None
 
-                await context.expose_binding("__archiveResource", resource)
                 page = await context.new_page()
                 content_failures = []
                 pending_content = set()
@@ -231,6 +314,12 @@ async def _render(url: str, settings: Settings) -> Rendered:
                     raise CaptureFailure("blocked_destination") from None
                 if "text/html" not in response.headers.get("content-type", ""):
                     raise CaptureFailure("unsupported_content")
+                try:
+                    await page.wait_for_function(
+                        "document.body && document.body.innerText.trim().length > 0", timeout=5000
+                    )
+                except BrowserTimeout:
+                    raise CaptureFailure("empty") from None
                 await page.evaluate("document.fonts.ready")
                 try:
                     async with asyncio.timeout(10):
@@ -247,10 +336,7 @@ async def _render(url: str, settings: Settings) -> Rendered:
                     await page.locator("body").inner_text(),
                     await page.locator("input[type=password]:visible").count() > 0,
                 )
-                # Automation evaluates our serializer without relaxing the site's
-                # CSP for its own scripts or inserting an inline script element.
-                await page.evaluate(asset.read_text())
-                html = await page.evaluate("globalThis.__archivePage()")
+                html = await serialize(page, asset.read_text(), resource)
                 dimensions = await page.evaluate(
                     "({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})"
                 )

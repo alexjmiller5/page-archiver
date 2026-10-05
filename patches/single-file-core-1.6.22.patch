@@ -1,6 +1,9 @@
 diff --git a/node_modules/single-file-core/.bun-tag-d09898f6a7ba2bad b/.bun-tag-d09898f6a7ba2bad
 new file mode 100644
 index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/single-file-core/.bun-tag-edc682badb6b6103 b/.bun-tag-edc682badb6b6103
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/core/helper.js b/core/helper.js
 index 9bf1070793927c516d03012f101786332ab1901c..4a753937996fbd109da158bdd3b8a49d4333d8fb 100644
 --- a/core/helper.js
@@ -34,3 +37,16 @@ index 9bf1070793927c516d03012f101786332ab1901c..4a753937996fbd109da158bdd3b8a49d
  						element.remove();
  					}
  				}
+diff --git a/core/index.js b/core/index.js
+index 490b3c11191cd7bed294526286b10a584ab9c82d..13338c038e50c41b8dd506777940601644579938 100644
+--- a/core/index.js
++++ b/core/index.js
+@@ -622,7 +622,7 @@ class Processor {
+ 		}
+ 		const collapsedElementCount = collapseRecreatedElements(this.doc);
+ 		const invalidNesting = collapsedElementCount || this.doc.querySelector(`[${util.NESTING_TRACK_ID_ATTRIBUTE_NAME}]`);
+-		if (invalidNesting) {
++		if (invalidNesting && !this.options.blockScripts) {
+ 			const scriptElement = this.doc.createElement("script");
+ 			scriptElement.textContent = `(${util.getFixInvalidNestingSource()})(document, "${util.NESTING_TRACK_ID_ATTRIBUTE_NAME}");`;
+ 			this.doc.body.appendChild(scriptElement);

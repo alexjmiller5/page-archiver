@@ -147,6 +147,10 @@ all of its content. Failed background fetch/XHR requests are counted in the mani
 Unused CSS rules are removed before fetching their assets, so missing images used
 only by absent elements do not invalidate a complete page. Missing retained images
 and styles still fail the capture.
+Initially empty pages get a bounded wait for rendered text. Serialization runs
+in an isolated browser world; where supported, the safe HTML parser handles
+Trusted Types pages without changing their security policy. Site scripts are
+excluded before serialization, and the retained page contains no runnable scripts.
 
 Large media-heavy pages can exceed the default 50 MiB artifact limit. Increase
 `max_artifact_bytes` explicitly when retaining those pages is worth the storage.
