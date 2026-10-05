@@ -24,7 +24,9 @@ pytestmark = pytest.mark.skipif(not Path(CHROME).exists(), reason="installed Chr
 
 
 @asynccontextmanager
-async def fixture_server(monkeypatch, page, status=200, resource_status=200, *, secure=False):
+async def fixture_server(
+    monkeypatch, page, status=200, resource_status=200, *, secure=False, data_delay=0
+):
     requests = []
 
     async def handle(reader, writer):
@@ -34,6 +36,9 @@ async def fixture_server(monkeypatch, page, status=200, resource_status=200, *, 
             path = raw.split(b" ")[1].decode()
             if path == "/":
                 mime, body = "text/html", page
+            elif path == "/article":
+                await asyncio.sleep(data_delay)
+                mime, body = "text/plain", "Late article body"
             elif path == "/style.css":
                 mime, body = (
                     "text/css",
@@ -82,6 +87,7 @@ async def fixture_server(monkeypatch, page, status=200, resource_status=200, *, 
         yield f"http://fixture.example:{port}/", requests
     finally:
         server.close()
+        server.close_clients()
         await server.wait_closed()
 
 
@@ -327,6 +333,30 @@ def test_delayed_article_content_is_allowed_to_render(tmp_path, monkeypatch):
             result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
         assert result.status == "succeeded", result
         assert "Loaded article" in Path(result.html.path).read_text()
+
+    asyncio.run(scenario())
+
+
+def test_pending_article_request_finishes_before_snapshot(tmp_path, monkeypatch):
+    async def scenario():
+        page = '<title>Article</title><body><nav>Navigation</nav><main></main><script>fetch("/article").then(response => response.text()).then(text => document.querySelector("main").textContent = text);</script>'
+        async with fixture_server(monkeypatch, page, data_delay=2) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        assert "Late article body" in Path(result.html.path).read_text()
+
+    asyncio.run(scenario())
+
+
+def test_background_long_poll_does_not_prevent_complete_capture(tmp_path, monkeypatch):
+    async def scenario():
+        page = '<title>Article</title><body><h1>Complete article</h1><script>fetch("/article").catch(() => {});</script>'
+        async with fixture_server(monkeypatch, page, data_delay=30) as (url, _):
+            result = await capture(
+                url, tmp_path / "result", Settings(browser_executable=CHROME, capture_timeout=10)
+            )
+        assert result.status == "succeeded", result
+        assert "Complete article" in Path(result.html.path).read_text()
 
     asyncio.run(scenario())
 

@@ -147,7 +147,9 @@ all of its content. Failed background fetch/XHR requests are counted in the mani
 Unused CSS rules are removed before fetching their assets, so missing images used
 only by absent elements do not invalidate a complete page. Missing retained images
 and styles still fail the capture.
-Initially empty pages get a bounded wait for rendered text. Serialization runs
+Initially empty pages get a bounded wait for rendered text. In-flight content
+requests get up to five seconds to finish before capture; background long polls
+do not prevent an otherwise complete page from being saved. Serialization runs
 in an isolated browser world; where supported, the safe HTML parser handles
 Trusted Types pages without changing their security policy. Site scripts are
 excluded from serialization without rewriting their text, including scripts in shadow

@@ -333,14 +333,14 @@ async def _render(url: str, settings: Settings) -> Rendered:
                     raise CaptureFailure("empty") from None
                 await page.evaluate("document.fonts.ready")
                 try:
-                    async with asyncio.timeout(10):
-                        while (
-                            pending_content
-                            and await page.locator('[aria-busy="true"]:visible').count()
-                        ):
+                    async with asyncio.timeout(5):
+                        while pending_content:
                             await asyncio.sleep(0.05)
                 except TimeoutError:
-                    raise CaptureFailure("partial") from None
+                    # Background long polls need not finish for a page to be
+                    # complete, but an explicitly busy main view must not pass.
+                    if await page.locator('[aria-busy="true"]:visible').count():
+                        raise CaptureFailure("partial") from None
                 title = await page.title()
                 classify_page(
                     title,
