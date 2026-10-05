@@ -12,5 +12,5 @@
 
 - [x] Reproduce navigation and readiness failures; add regression tests.
 - [x] Implement readiness, browser mode, partial warnings and publication validation.
-- [ ] Verify browser regressions, mutation checks, full tests, package/system builds and independent review.
-- [ ] Refresh consumer documentation/catalog, publish and install; verify live retained artifacts and finish targeted retries.
+- [x] Verify browser regressions, mutation checks, full tests, package/system builds and independent review.
+- [x] Refresh consumer documentation/catalog, publish and install; verify live retained artifacts and finish targeted retries.
