@@ -113,3 +113,33 @@ def test_chunked_download_verifies_stream_length_when_transport_omits_content_le
         assert (tmp_path / "page.html").read_bytes() == data
 
     asyncio.run(check())
+
+
+def test_retrieve_partial_capture_preserves_warning_and_both_artifacts(tmp_path):
+    import json
+
+    class Hub:
+        async def rows(self, table, columns, *, where):
+            return {
+                "rows": [
+                    {
+                        "id": "attempt-1",
+                        "status": "partial",
+                        "failure_code": "partial",
+                        "failure_detail": "Incomplete archive: 2 resource requests could not be saved.",
+                        **{f"{kind}_key": f"captures/a/page.{kind}" for kind in ("html", "png")},
+                    }
+                ]
+            }
+
+        async def download(self, key, path, expected):
+            path.write_bytes(b"fixture")
+
+    result = asyncio.run(retrieve(Hub(), settings(), "attempt-1", tmp_path / "result"))
+    assert result["status"] == "partial"
+    assert result["warning"].startswith("Incomplete archive:")
+    assert (tmp_path / "result/page.html").exists() and (tmp_path / "result/page.png").exists()
+    assert (
+        json.loads((tmp_path / "result/metadata.json").read_text())["failure_detail"]
+        == result["warning"]
+    )

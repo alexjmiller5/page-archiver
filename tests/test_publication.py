@@ -165,11 +165,14 @@ def test_existing_metadata_conflict_cannot_be_overwritten(tmp_path):
     assert hub.metadata["attempt-1"]["source_url"].endswith("different")
 
 
+@pytest.mark.parametrize("status", ["succeeded", "partial"])
 @pytest.mark.parametrize("change", ["outside", "symlink", "bad_mime", "missing_png"])
-def test_manifest_cannot_publish_escaped_or_incomplete_artifacts(tmp_path, change):
+def test_manifest_cannot_publish_escaped_or_incomplete_artifacts(tmp_path, change, status):
     settings, job, attempt = context(tmp_path)
     hub = FakeHub()
     outcome = staged(tmp_path / "spool/attempt-1")
+    outcome.status = status
+    outcome.missing_resources = 2 if status == "partial" else 0
     path = Path(outcome.html.path)
     if change == "outside":
         elsewhere = tmp_path / "elsewhere"
@@ -217,5 +220,30 @@ def test_metadata_matches_shared_client_fixture(tmp_path):
         png=Artifact(path="unused", mime="image/png", bytes=100, sha256="a" * 64),
     )
     assert metadata(config, job, attempt, outcome) == expected
+    outcome.status = "partial"
+    outcome.missing_resources = 2
+    assert metadata(config, job, attempt, outcome) == {**expected, **contract["partial_fields"]}
     failed = metadata(config, job, attempt, Outcome(status="login_required"))
     assert {k: failed[k] for k in contract["failure_fields"]} == contract["failure_fields"]
+
+
+def test_partial_capture_publishes_verified_artifacts_and_warning_idempotently(tmp_path):
+    settings, job, attempt = context(tmp_path)
+    outcome = staged(tmp_path / "spool/attempt-1")
+    outcome.status = "partial"
+    outcome.missing_resources = 2
+    hub = FakeHub()
+
+    async def check():
+        row = await publish_attempt(hub, settings, job, attempt, outcome)
+        assert row["status"] == "partial"
+        assert row["failure_code"] == "partial"
+        assert (
+            row["failure_detail"] == "Incomplete archive: 2 resource requests could not be saved."
+        )
+        assert row["captured_at"] and row["html_key"] and row["png_key"]
+        assert len(hub.files) == 2
+        assert await publish_attempt(hub, settings, job, attempt, outcome) == row
+        assert len(hub.uploads) == 2
+
+    asyncio.run(check())

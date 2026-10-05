@@ -237,7 +237,7 @@ class Store:
                 state: self.db.execute(
                     "SELECT count(*) FROM jobs WHERE state=?", (state,)
                 ).fetchone()[0]
-                for state in ("active", "succeeded", "failed")
+                for state in ("active", "succeeded", "partial", "failed")
             },
             "runtime": {
                 row["component"]: row["code"]
@@ -334,6 +334,11 @@ class Store:
             state = (
                 "succeeded"
                 if attempt["outcome"]["status"] == "succeeded"
+                else "partial"
+                if attempt["outcome"]["status"] == "partial"
+                and attempt["outcome"].get("captured_at")
+                and attempt["outcome"].get("html")
+                and attempt["outcome"].get("png")
                 else "queued"
                 if retry
                 else "failed"

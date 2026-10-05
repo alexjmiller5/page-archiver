@@ -45,11 +45,17 @@ def metadata(settings: Settings, job: dict, attempt: dict, outcome: Outcome) -> 
     if outcome.status != "succeeded" and outcome.status not in FAILURES:
         raise HubError("invalid_capture_outcome", fatal=True)
     succeeded = outcome.status == "succeeded"
+    partial = outcome.status == "partial" and outcome.captured_at is not None
+    retained = succeeded or partial
+    if partial and outcome.missing_resources < 1:
+        raise HubError("invalid_capture_outcome", fatal=True)
     attempted_at = timestamp(attempt["started_at"])
-    captured_at = timestamp(outcome.captured_at) if succeeded else None
+    captured_at = timestamp(outcome.captured_at) if retained else None
     status = (
         "succeeded"
         if succeeded
+        else "partial"
+        if partial
         else "blocked"
         if outcome.status in {"blocked", "login_required"}
         else "unsupported"
@@ -71,19 +77,21 @@ def metadata(settings: Settings, job: dict, attempt: dict, outcome: Outcome) -> 
         "captured_at": captured_at,
         "status": status,
         "failure_code": None if succeeded else outcome.status,
-        "failure_detail": None,
+        "failure_detail": f"Incomplete archive: {outcome.missing_resources} resource requests could not be saved."
+        if partial
+        else None,
         "created_at": attempted_at,
         "updated_at": captured_at or attempted_at,
         "deleted_at": None,
     }
     for kind, mime in ARTIFACTS.items():
-        artifact = getattr(outcome, kind) if succeeded else None
-        if succeeded and (artifact is None or artifact.mime != mime):
+        artifact = getattr(outcome, kind) if retained else None
+        if retained and (artifact is None or artifact.mime != mime):
             raise HubError("staged_artifact_mismatch", fatal=True)
         row.update(
             {
                 f"{kind}_key": f"{settings.artifact_prefix}{job['capture_id']}/{attempt['id']}/page.{kind}"
-                if succeeded
+                if retained
                 else None,
                 f"{kind}_mime": artifact.mime if artifact else None,
                 f"{kind}_bytes": artifact.bytes if artifact else None,
@@ -142,10 +150,10 @@ async def publish_attempt(
 ) -> dict:
     row = metadata(settings, job, attempt, outcome)
     if await existing(hub, settings, row):
-        if row["status"] == "succeeded":
+        if row["status"] in {"succeeded", "partial"}:
             await verify_remote(hub, row)
         return row
-    if row["status"] == "succeeded":
+    if row["status"] in {"succeeded", "partial"}:
         validate_staged(settings, attempt, outcome)
         for kind in ARTIFACTS:
             artifact = getattr(outcome, kind)

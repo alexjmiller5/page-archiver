@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     max_artifact_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=250 * 1024 * 1024)
     max_screenshot_pixels: int = Field(default=50_000_000, ge=1_000_000, le=200_000_000)
 
+    min_screenshot_scale: float = Field(default=1.0, ge=0.5, le=1.0)
+    retain_partial: bool = False
+
     @classmethod
     def settings_customise_sources(
         cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings

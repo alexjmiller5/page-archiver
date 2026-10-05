@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -43,6 +44,7 @@ class Outcome(BaseModel):
     html: Artifact | None = None
     png: Artifact | None = None
     page_request_failures: int = 0
+    missing_resources: int = 0
 
 
 @dataclass
@@ -107,6 +109,7 @@ async def serialize(page, script: str, resource) -> str:
     """Run the serializer in its own world without changing the site's CSP."""
     session = await page.context.new_cdp_session(page)
     tasks = set()
+    missing = 0
     try:
         frame = (await session.send("Page.getFrameTree"))["frameTree"]["frame"]["id"]
         world = await session.send(
@@ -129,10 +132,12 @@ async def serialize(page, script: str, resource) -> str:
             return result["result"].get("value")
 
         async def respond(event):
+            nonlocal missing
             request = json.loads(event["payload"])
             try:
                 value = await resource(None, request["url"])
             except RuntimeError:
+                missing += 1
                 value = None
             await evaluate(f"globalThis.__archiveReply({request['id']},{json.dumps(value)})")
 
@@ -185,7 +190,10 @@ async def serialize(page, script: str, resource) -> str:
         try:
             document = await cleanup.new_page()
             await document.evaluate(script)
-            return await document.evaluate("html => globalThis.__archiveFinalize(html)", html)
+            return await document.evaluate(
+                "args => globalThis.__archiveFinalize(args.html, args.missing)",
+                {"html": html, "missing": missing},
+            )
         finally:
             await cleanup.close()
     finally:
@@ -369,9 +377,36 @@ async def _render(url: str, settings: Settings) -> Rendered:
                 dimensions = await page.evaluate(
                     "({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})"
                 )
-                if dimensions["width"] * dimensions["height"] > settings.max_screenshot_pixels:
+                pixels = dimensions["width"] * dimensions["height"]
+                scale = min(1.0, math.sqrt(settings.max_screenshot_pixels / pixels))
+                if scale < settings.min_screenshot_scale:
                     raise CaptureFailure("too_large")
-                png = await page.screenshot(full_page=True, animations="disabled", timeout=15000)
+                if scale == 1:
+                    png = await page.screenshot(
+                        full_page=True, animations="disabled", timeout=15000
+                    )
+                else:
+                    # Scale the bitmap, not CSS layout or the retained HTML. CDP
+                    # applies this before allocating the output screenshot.
+                    session = await context.new_cdp_session(page)
+                    try:
+                        async with asyncio.timeout(15):
+                            shot = await session.send(
+                                "Page.captureScreenshot",
+                                {
+                                    "format": "png",
+                                    "captureBeyondViewport": True,
+                                    "clip": {
+                                        "x": 0,
+                                        "y": 0,
+                                        **dimensions,
+                                        "scale": math.floor(scale * 1000) / 1000,
+                                    },
+                                },
+                            )
+                        png = base64.b64decode(shot["data"])
+                    finally:
+                        await session.detach()
                 if proxy.exhausted or fetched > 200 * 1024 * 1024:
                     raise CaptureFailure("too_large")
                 if await page.locator('[aria-busy="true"]:visible').count():
@@ -399,6 +434,8 @@ async def capture(url: str, destination: Path, settings: Settings) -> Outcome:
             rendered = await _render(url, settings)
         if not rendered.html or not rendered.html.strip():
             raise CaptureFailure("empty")
+        if rendered.missing_resources and not settings.retain_partial:
+            raise CaptureFailure("partial")
         html = rendered.html.encode("utf-8")
         if max(len(html), len(rendered.png)) > settings.max_artifact_bytes:
             raise CaptureFailure("too_large")
@@ -408,10 +445,12 @@ async def capture(url: str, destination: Path, settings: Settings) -> Outcome:
             or not all(struct.unpack(">II", rendered.png[16:24]))
         ):
             raise CaptureFailure("invalid_artifact")
-        if rendered.missing_resources:
-            raise CaptureFailure("partial")
+        width, height = struct.unpack(">II", rendered.png[16:24])
+        if width * height > settings.max_screenshot_pixels:
+            raise CaptureFailure("too_large")
         result = Outcome(
-            status="succeeded",
+            status="partial" if rendered.missing_resources else "succeeded",
+            missing_resources=rendered.missing_resources,
             captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             final_url=rendered.final_url,
             title=rendered.title,

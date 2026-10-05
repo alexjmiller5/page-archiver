@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     retry_parser.add_argument("capture_id")
     get_parser = commands.add_parser(
-        "retrieve", help="Download a successful capture through file authorization"
+        "retrieve", help="Download a retained capture through file authorization"
     )
     get_parser.add_argument("attempt_id")
     get_parser.add_argument("--output", type=Path, required=True)

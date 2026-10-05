@@ -40,5 +40,10 @@
     "png_mime": null,
     "png_bytes": null,
     "png_sha256": null
+  },
+  "partial_fields": {
+    "status": "partial",
+    "failure_code": "partial",
+    "failure_detail": "Incomplete archive: 2 resource requests could not be saved."
   }
 }

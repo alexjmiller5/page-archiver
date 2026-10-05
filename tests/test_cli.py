@@ -13,6 +13,7 @@ def test_status_uses_configured_state_and_never_reads_credentials(monkeypatch, t
         "pending_acks": 0,
         "active": 0,
         "succeeded": 0,
+        "partial": 0,
         "failed": 0,
         "runtime": {},
     }

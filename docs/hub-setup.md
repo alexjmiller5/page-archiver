@@ -17,7 +17,7 @@ life table create captures \
   'source_table:text!' 'source_row_id:text!' 'source_column:text!' \
   'source_url:text!' 'observed_source_revision:json!' \
   'attempted_at:datetime!' 'captured_at:datetime' \
-  'status:select!(succeeded|blocked|failed|unsupported)' \
+  'status:select!(succeeded|partial|blocked|failed|unsupported)' \
   'failure_code:text' 'failure_detail:text' \
   'html_key:text' 'html_mime:text' 'html_bytes:int' 'html_sha256:text' \
   'png_key:text' 'png_mime:text' 'png_bytes:int' 'png_sha256:text'
@@ -46,14 +46,19 @@ supplies `hub_at`. All submitted dates use UTC milliseconds ending in `Z`.
 | `source_table`, `source_row_id`, `source_column` | Original selected source location |
 | `source_url` | Exact accepted URL, including an invalid URL recorded as a failure |
 | `observed_source_revision` | JSON text containing `updated_at` and `hub_at` from the observation |
-| `attempted_at`, `captured_at` | Attempt start and successful capture time; capture time is null on failure |
-| `status` | `succeeded`, `blocked`, `failed` or `unsupported` |
-| `failure_code`, `failure_detail` | Stable local failure code and reserved nullable detail; both null on success |
+| `attempted_at`, `captured_at` | Attempt start and retained capture time; capture time is null without artifacts |
+| `status` | `succeeded`, `partial`, `blocked`, `failed` or `unsupported` |
+| `failure_code`, `failure_detail` | Stable local failure code and safe incomplete-capture warning; both null on complete success |
 | `html_key`, `png_key` | Canonical opaque hub keys, never URLs or credentials |
 | `<kind>_mime`, `<kind>_bytes`, `<kind>_sha256` | Exact MIME, byte count and lowercase SHA-256 for HTML or PNG |
 
-Every successful row contains both complete artifact groups. Every failed row
-has both groups and `captured_at` null. Metadata is inserted once per attempt.
+Every `succeeded` or `partial` row contains both verified artifact groups and
+`captured_at`. A `partial` row is a readable page with missing resource requests,
+not a complete capture: `failure_code` is `partial` and `failure_detail` carries
+a warning with the missing request count. Viewers must display that warning and
+allow independently authorized artifact retrieval for both retained statuses.
+Every `blocked`, `failed` or `unsupported` row has both groups and `captured_at`
+null. Existing failures with code `partial` have no retained artifacts. Metadata is inserted once per attempt.
 A retry of publication reuses the same attempt ID and bytes; a new browser
 capture gets a new attempt ID. Transient capture failures have at most three
 automatic attempts. Explicit `retry` creates a new observation of the current
@@ -62,7 +67,7 @@ source row, with its current revision.
 Artifact keys are `<prefix><capture-id>/<attempt-id>/page.html` and `page.png`.
 PUT sends `If-None-Match: *`, MIME, byte count and `X-Content-SHA256`.
 A 412 is reconciled through HEAD. Both remote objects must match MIME, bytes and
-SHA-256 before a success row is inserted. A conflict stops the runner and retains
+SHA-256 before a retained capture row is inserted. A conflict stops the runner and retains
 its local attempt for inspection; it never replaces an existing object.
 
 Create a subscription with the administrator API:

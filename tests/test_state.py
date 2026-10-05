@@ -45,6 +45,7 @@ def test_batch_and_ack_receipt_survive_restart_with_private_state(tmp_path):
             "pending_acks": 1,
             "active": 0,
             "succeeded": 0,
+            "partial": 0,
             "failed": 0,
             "runtime": {},
         }
@@ -74,6 +75,7 @@ def test_malformed_batch_never_partially_commits_or_creates_ack(tmp_path):
             "pending_acks": 0,
             "active": 0,
             "succeeded": 0,
+            "partial": 0,
             "failed": 0,
             "runtime": {},
         }
@@ -110,6 +112,7 @@ def test_fast_url_replacement_preserves_both_values_and_delete_does_not_capture(
             "pending_acks": 0,
             "active": 0,
             "succeeded": 0,
+            "partial": 0,
             "failed": 0,
             "runtime": {},
         }
@@ -139,6 +142,7 @@ def test_conflicting_existing_event_rolls_back_whole_new_batch(tmp_path):
             "pending_acks": 0,
             "active": 0,
             "succeeded": 0,
+            "partial": 0,
             "failed": 0,
             "runtime": {},
         }
@@ -329,3 +333,23 @@ def test_consumer_identity_prevents_republishing_into_a_different_service(tmp_pa
         ]:
             with pytest.raises(ValueError, match="consumer_configuration_changed"):
                 store.bind_consumer(*changed)
+
+
+def test_retained_partial_has_its_own_terminal_count(tmp_path):
+    with Store(tmp_path) as store:
+        store.accept_batch(batch())
+        job = store.next_job()
+        attempt = store.begin_attempt(job["capture_id"])
+        store.save_outcome(
+            attempt["id"],
+            {
+                "status": "partial",
+                "captured_at": "2026-01-01T00:00:00Z",
+                "html": {"path": "fixture.html"},
+                "png": {"path": "fixture.png"},
+            },
+        )
+        store.finish_attempt(attempt["id"])
+        assert store.status()["partial"] == 1
+        assert store.status()["succeeded"] == store.status()["failed"] == 0
+        assert store.next_job() is None

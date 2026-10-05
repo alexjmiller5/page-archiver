@@ -43,7 +43,7 @@ globalThis.__archivePage = async () => {
   return data.content;
 };
 
-globalThis.__archiveFinalize = content => {
+globalThis.__archiveFinalize = (content, missing = 0) => {
   // SingleFile can add its own layout-repair script even with blockScripts.
   // Apply that repair now to an inert document, then retain no runnable script.
   // This does not make arbitrary archived HTML trusted viewer content.
@@ -54,5 +54,12 @@ globalThis.__archiveFinalize = content => {
   policy.httpEquiv = 'Content-Security-Policy';
   policy.content = "default-src 'none'; img-src data:; style-src 'unsafe-inline' data:; font-src data:; media-src data:; form-action 'none'; base-uri 'none'";
   saved.head.prepend(policy);
+  if (missing > 0) {
+    const warning = saved.createElement('aside');
+    warning.setAttribute('role', 'note');
+    warning.style.cssText = 'padding:16px;background:#fff3cd;color:#332701;font:16px sans-serif;border:2px solid #b58100';
+    warning.textContent = `Incomplete archive: ${missing} resource requests could not be saved.`;
+    saved.body.prepend(warning);
+  }
   return '<!DOCTYPE html>\n' + saved.documentElement.outerHTML;
 };

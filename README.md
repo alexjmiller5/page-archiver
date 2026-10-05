@@ -141,14 +141,15 @@ Only public HTTP(S) destinations are allowed. The local capture proxy resolves
 and pins each connection to a public IP, including redirects and resources.
 The browser receives neither hub credentials nor a reused login profile.
 Captures are bounded by elapsed time, transfer bytes and image dimensions.
-Recognized CAPTCHA/login walls, partial HTTP responses, missing archive resources
-and exceeded limits are failures. Loading placeholders and visibly busy content
+Recognized CAPTCHA/login walls, partial HTTP responses and exceeded limits are
+failures. Missing archive resources fail by default or produce explicitly marked
+partial copies when retention is enabled. Loading placeholders and visibly busy content
 also fail. These checks are heuristics; success does not prove that a site supplied
 all of its content. Failed background fetch/XHR requests are counted in the manifest's
 `page_request_failures` field, since a failed metrics request can leave content intact.
 Unused CSS rules are removed before fetching their assets, so missing images used
 only by absent elements do not invalidate a complete page. Missing retained images
-and styles still fail the capture.
+and styles prevent a complete-success classification.
 Initially empty pages get a bounded wait for rendered text. In-flight content
 requests get up to five seconds to finish before capture; background long polls
 do not prevent an otherwise complete page from being saved. Serialization runs
@@ -162,7 +163,17 @@ Large media-heavy pages can exceed the default 50 MiB artifact limit. Increase
 `max_artifact_bytes` explicitly when retaining those pages is worth the storage.
 Full-resolution screenshots have a separate `max_screenshot_pixels` budget
 (50 million by default, configurable up to 200 million). Raise it for long pages
-when the capturing machine has enough memory; screenshots are never downscaled.
+when the capturing machine has enough memory. `min_screenshot_scale` defaults to
+1 (full resolution only). Set it to 0.5 to permit a full-page PNG at no less than
+half resolution per dimension when needed to fit the pixel budget. HTML layout
+and fidelity are unchanged; pages needing a greater reduction remain too large.
+
+`retain_partial` defaults to false. When enabled, readable finished pages with
+missing images/fonts or other resource requests retain both artifacts with a
+separate `partial` status, a visible HTML warning, and a safe count warning in
+metadata and `retrieve` output. Login gates, HTTP failures, blank pages and
+stuck loading screens still produce no artifacts. `status` counts partial
+captures separately from complete successes and failures.
 
 A capture records what the external site serves when fetched. It cannot recover
 content that changed or disappeared before capture. Video/audio and embedded

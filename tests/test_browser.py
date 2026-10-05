@@ -462,3 +462,54 @@ def test_public_titles_containing_login_substrings_capture(tmp_path, monkeypatch
         assert "Public articles and examples" in Path(result.html.path).read_text()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "page,resource_status,retained",
+    [
+        ('<title>Article</title><body><h1>Readable article</h1><img src="/image.svg">', 404, True),
+        ('<title>Article</title><body><main aria-busy="true">Still loading</main>', 200, False),
+    ],
+)
+def test_opt_in_partial_retention_requires_readable_finished_page(
+    tmp_path, monkeypatch, page, resource_status, retained
+):
+    async def scenario():
+        async with fixture_server(monkeypatch, page, resource_status=resource_status) as (url, _):
+            result = await capture(
+                url, tmp_path / "result", Settings(browser_executable=CHROME, retain_partial=True)
+            )
+        assert result.status == "partial", result
+        assert bool(result.html and result.png) is retained
+        if retained:
+            html = Path(result.html.path).read_text()
+            assert "Readable article" in html
+            assert "Incomplete archive:" in html
+            assert result.missing_resources > 0
+        else:
+            assert not (tmp_path / "result").exists()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("height,expected", [(2000, "succeeded"), (4000, "too_large")])
+def test_optional_screenshot_scaling_is_bounded_and_keeps_full_page(
+    tmp_path, monkeypatch, height, expected
+):
+    async def scenario():
+        page = f'<title>Long article</title><body style="margin:0;height:{height}px"><h1>Article</h1><footer style="position:absolute;bottom:0">End of article</footer>'
+        settings = Settings(
+            browser_executable=CHROME, max_screenshot_pixels=1_000_000, min_screenshot_scale=0.5
+        )
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", settings)
+        assert result.status == expected, result
+        if expected == "succeeded":
+            width, png_height = struct.unpack(">II", Path(result.png.path).read_bytes()[16:24])
+            assert 720 <= width < 1440
+            assert width * png_height <= 1_000_000
+            assert abs(width / png_height - 1440 / height) < 0.002
+            html = Path(result.html.path).read_text()
+            assert "End of article" in html and f"{height}px" in html
+
+    asyncio.run(scenario())

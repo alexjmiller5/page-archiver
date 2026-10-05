@@ -9,7 +9,9 @@ Use uv through just; the environment lives outside an iCloud checkout.
 `just test`, `just check`, `just fmt`, `just run --help`, `just build`.
 Write behavior tests before implementation. Run capture fixtures with a fresh
 browser; never attach to a user's logged-in browser or forward hub credentials.
-Do not classify blocked/login/partial pages as successful captures.
+Do not classify blocked/login/partial pages as complete successful captures.
+Opt-in readable partial captures retain both verified artifacts with a distinct
+partial status and warning. Page-level loading/auth failures retain no artifacts.
 
 ## Ownership
 
