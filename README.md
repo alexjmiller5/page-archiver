@@ -158,6 +158,9 @@ survives parsing. The retained page contains no runnable scripts.
 
 Large media-heavy pages can exceed the default 50 MiB artifact limit. Increase
 `max_artifact_bytes` explicitly when retaining those pages is worth the storage.
+Full-resolution screenshots have a separate `max_screenshot_pixels` budget
+(50 million by default, configurable up to 200 million). Raise it for long pages
+when the capturing machine has enough memory; screenshots are never downscaled.
 
 A capture records what the external site serves when fetched. It cannot recover
 content that changed or disappeared before capture. Video/audio and embedded

@@ -388,3 +388,24 @@ def test_trusted_types_shadow_scripts_are_excluded_without_rewriting(tmp_path, m
         assert "<script" not in html
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "pixel_limit,expected", [(50_000_000, "too_large"), (60_000_000, "succeeded")]
+)
+def test_tall_pages_keep_full_resolution_within_configured_pixel_budget(
+    tmp_path, monkeypatch, pixel_limit, expected
+):
+    async def scenario():
+        page = '<title>Long article</title><body style="margin:0;height:40000px"><h1 style="margin:0">Long article</h1><footer style="position:absolute;top:39950px">End of article</footer>'
+        settings = Settings(browser_executable=CHROME, max_screenshot_pixels=pixel_limit)
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", settings)
+        assert result.status == expected, result
+        if expected == "succeeded":
+            assert struct.unpack(">II", Path(result.png.path).read_bytes()[16:24]) == (1440, 40000)
+            assert "End of article" in Path(result.html.path).read_text()
+        else:
+            assert not (tmp_path / "result").exists()
+
+    asyncio.run(scenario())

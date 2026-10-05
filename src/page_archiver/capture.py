@@ -351,10 +351,7 @@ async def _render(url: str, settings: Settings) -> Rendered:
                 dimensions = await page.evaluate(
                     "({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})"
                 )
-                if (
-                    dimensions["width"] * dimensions["height"] > 50_000_000
-                    or dimensions["height"] > 32767
-                ):
+                if dimensions["width"] * dimensions["height"] > settings.max_screenshot_pixels:
                     raise CaptureFailure("too_large")
                 png = await page.screenshot(full_page=True, animations="disabled", timeout=15000)
                 if proxy.exhausted or fetched > 200 * 1024 * 1024:

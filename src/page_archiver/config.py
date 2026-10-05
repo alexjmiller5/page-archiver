@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     browser_executable: Path | None = None
     capture_timeout: int = Field(default=90, ge=1, le=600)
     max_artifact_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=250 * 1024 * 1024)
+    max_screenshot_pixels: int = Field(default=50_000_000, ge=1_000_000, le=200_000_000)
 
     @classmethod
     def settings_customise_sources(
