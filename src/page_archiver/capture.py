@@ -374,6 +374,32 @@ async def _render(url: str, settings: Settings) -> Rendered:
                             raise
                         await asyncio.sleep(0.1)
                 html = await serialize(page, asset.read_text(), resource)
+                # Match Playwright's disabled-animation screenshots. This
+                # fresh page is closed after capture, so no restoration is
+                # needed. Include animations inside open shadow roots.
+                await page.evaluate("""async () => {
+                    const visit = root => {
+                        const finish = () => {
+                            for (const animation of root.getAnimations()) {
+                                if (!animation.effect || !animation.playbackRate) continue;
+                                try {
+                                    if (Number.isFinite(animation.effect.getComputedTiming().endTime))
+                                        animation.finish();
+                                    else animation.cancel();
+                                } catch {}
+                            }
+                        };
+                        finish();
+                        root.addEventListener('transitionrun', finish);
+                        root.addEventListener('animationstart', finish);
+                        for (const element of root.querySelectorAll('*'))
+                            if (element.shadowRoot) visit(element.shadowRoot);
+                    };
+                    visit(document);
+                    // Animation completion handlers may also change layout.
+                    await new Promise(resolve => requestAnimationFrame(() =>
+                        requestAnimationFrame(resolve)));
+                }""")
                 dimensions = await page.evaluate(
                     "({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})"
                 )

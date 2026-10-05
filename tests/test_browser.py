@@ -513,3 +513,103 @@ def test_optional_screenshot_scaling_is_bounded_and_keeps_full_page(
             assert "End of article" in html and f"{height}px" in html
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("pixel_limit", [1_000_000, 4_000_000])
+def test_scaled_and_full_resolution_screenshots_finish_delayed_animations(
+    tmp_path, monkeypatch, pixel_limit
+):
+    import base64
+
+    async def scenario():
+        page = '<title>Article</title><style>@keyframes appear { from { opacity:0 } to { opacity:1 } } #article { position:absolute;top:0;left:0;width:200px;height:200px;background:rgb(255,0,0);animation:appear 1s 120s both }</style><body style="margin:0;height:2000px"><h1>Public article</h1><div id="article">Animated article</div>'
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(
+                url,
+                tmp_path / "result",
+                Settings(
+                    browser_executable=CHROME,
+                    max_screenshot_pixels=pixel_limit,
+                    min_screenshot_scale=0.5,
+                ),
+            )
+        assert result.status == "succeeded", result
+        data_url = (
+            "data:image/png;base64," + base64.b64encode(Path(result.png.path).read_bytes()).decode()
+        )
+        async with async_playwright() as driver:
+            browser = await driver.chromium.launch(executable_path=CHROME, chromium_sandbox=True)
+            try:
+                image_page = await browser.new_page()
+                pixel = await image_page.evaluate(
+                    """async url => {
+                    const img = new Image(); img.src = url; await img.decode();
+                    const canvas = document.createElement('canvas'); canvas.width=1; canvas.height=1;
+                    const ctx = canvas.getContext('2d'); ctx.drawImage(img, 10, 10, 1, 1, 0, 0, 1, 1);
+                    return [...ctx.getImageData(0, 0, 1, 1).data];
+                }""",
+                    data_url,
+                )
+                assert pixel == [255, 0, 0, 255]
+            finally:
+                await browser.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "start,end,budget,on_end",
+    [
+        (2000, 3000, 2_000_000, False),
+        (1200, 3000, 2_000_000, False),
+        (4000, 2000, 1_000_000, False),
+        (2000, 3000, 2_000_000, True),
+    ],
+)
+def test_screenshot_measures_finished_animation_geometry(
+    tmp_path, monkeypatch, start, end, budget, on_end
+):
+    import base64
+
+    async def scenario():
+        animated_end = start if on_end else end
+        callback = (
+            f'<script>document.body.addEventListener("animationend", () => {{ document.body.style.height="{end}px"; document.body.style.animation="none"; }})</script>'
+            if on_end
+            else ""
+        )
+        page = f"<title>Article</title><style>@keyframes grow {{ from {{ height:{start}px }} to {{ height:{animated_end}px }} }} body {{ margin:0;position:relative;animation:grow 1s 120s both }} footer {{ position:absolute;bottom:0;width:100%;height:50px;background:rgb(0,255,0) }}</style><body><h1>Public article</h1><footer>Article end</footer>{callback}"
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(
+                url,
+                tmp_path / "result",
+                Settings(
+                    browser_executable=CHROME,
+                    max_screenshot_pixels=budget,
+                    min_screenshot_scale=0.5,
+                ),
+            )
+        assert result.status == "succeeded", result
+        png = Path(result.png.path).read_bytes()
+        width, height = struct.unpack(">II", png[16:24])
+        assert abs(width / height - 1440 / end) < 0.002
+        assert width * height <= budget
+        data_url = "data:image/png;base64," + base64.b64encode(png).decode()
+        async with async_playwright() as driver:
+            browser = await driver.chromium.launch(executable_path=CHROME, chromium_sandbox=True)
+            try:
+                image_page = await browser.new_page()
+                pixel = await image_page.evaluate(
+                    """async url => {
+                    const img = new Image(); img.src=url; await img.decode();
+                    const canvas = document.createElement('canvas'); canvas.width=1; canvas.height=1;
+                    const ctx = canvas.getContext('2d'); ctx.drawImage(img, 10, img.height-10, 1, 1, 0, 0, 1, 1);
+                    return [...ctx.getImageData(0,0,1,1).data];
+                }""",
+                    data_url,
+                )
+                assert pixel == [0, 255, 0, 255]
+            finally:
+                await browser.close()
+
+    asyncio.run(scenario())
