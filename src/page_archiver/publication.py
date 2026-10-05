@@ -5,7 +5,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .capture import Outcome
+from .capture import Outcome, partial_warning
 from .client import HubError
 from .config import Settings
 from .state import encoded
@@ -47,7 +47,12 @@ def metadata(settings: Settings, job: dict, attempt: dict, outcome: Outcome) -> 
     succeeded = outcome.status == "succeeded"
     partial = outcome.status == "partial" and outcome.captured_at is not None
     retained = succeeded or partial
-    if partial and outcome.missing_resources < 1:
+    warning = partial_warning(outcome.missing_resources, outcome.incomplete_regions)
+    if (
+        min(outcome.missing_resources, outcome.incomplete_regions) < 0
+        or (partial and not warning)
+        or (succeeded and warning)
+    ):
         raise HubError("invalid_capture_outcome", fatal=True)
     attempted_at = timestamp(attempt["started_at"])
     captured_at = timestamp(outcome.captured_at) if retained else None
@@ -77,9 +82,7 @@ def metadata(settings: Settings, job: dict, attempt: dict, outcome: Outcome) -> 
         "captured_at": captured_at,
         "status": status,
         "failure_code": None if succeeded else outcome.status,
-        "failure_detail": f"Incomplete archive: {outcome.missing_resources} resource requests could not be saved."
-        if partial
-        else None,
+        "failure_detail": warning if partial else None,
         "created_at": attempted_at,
         "updated_at": captured_at or attempted_at,
         "deleted_at": None,

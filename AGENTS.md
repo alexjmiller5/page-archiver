@@ -11,7 +11,9 @@ Write behavior tests before implementation. Run capture fixtures with a fresh
 browser; never attach to a user's logged-in browser or forward hub credentials.
 Do not classify blocked/login/partial pages as complete successful captures.
 Opt-in readable partial captures retain both verified artifacts with a distinct
-partial status and warning. Page-level loading/auth failures retain no artifacts.
+partial status and safe missing-resource/unfinished-section count warning.
+Primary-content loading/auth failures retain no artifacts. Windowed mode uses
+a fresh browser, the same public proxy and the same capture deadline.
 
 ## Ownership
 

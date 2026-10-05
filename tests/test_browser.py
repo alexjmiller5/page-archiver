@@ -32,6 +32,7 @@ async def fixture_server(
     *,
     secure=False,
     data_delay=0,
+    resource_delay=0,
     require_identification=False,
 ):
     requests = []
@@ -52,6 +53,7 @@ async def fixture_server(
                     "body { background: rgb(20, 40, 80); color: white; min-height: 1200px } h1 { font-size: 48px } @media (min-width: 1400px) { #columns { display: flex } #columns > div { width: 50% } }",
                 )
             elif path == "/image.svg":
+                await asyncio.sleep(resource_delay)
                 mime, body = (
                     "image/svg+xml",
                     '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120"><rect width="240" height="120" fill="orange"/></svg>',
@@ -464,6 +466,23 @@ def test_public_titles_containing_login_substrings_capture(tmp_path, monkeypatch
     asyncio.run(scenario())
 
 
+def test_readable_page_with_stalled_image_retains_warned_partial(tmp_path, monkeypatch):
+    async def scenario():
+        page = '<title>Product</title><body><main><h1>Product details</h1><p>Readable description and price.</p><img src="/image.svg"></main>'
+        async with fixture_server(monkeypatch, page, resource_delay=30) as (url, _):
+            result = await capture(
+                url,
+                tmp_path / "result",
+                Settings(browser_executable=CHROME, retain_partial=True, capture_timeout=25),
+            )
+        assert result.status == "partial", result
+        assert result.html and result.png and result.missing_resources > 0
+        assert "Product details" in Path(result.html.path).read_text()
+        assert "Incomplete archive:" in Path(result.html.path).read_text()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "page,resource_status,retained",
     [
@@ -611,5 +630,240 @@ def test_screenshot_measures_finished_animation_geometry(
                 assert pixel == [0, 255, 0, 255]
             finally:
                 await browser.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "busy_main,busy_heading,retain,retained",
+    [
+        (False, False, True, True),
+        (True, False, True, False),
+        (False, True, True, False),
+        (False, False, False, False),
+    ],
+)
+@pytest.mark.parametrize("root_tag", ["main", "div"])
+def test_unfinished_secondary_sections_require_readable_main_content(
+    tmp_path, monkeypatch, busy_main, busy_heading, retain, retained, root_tag
+):
+    async def scenario():
+        content = (
+            "<h1>Product details</h1><article><p>"
+            + ("A useful product description with its price and specifications. " * 8)
+            + "</p></article>"
+        )
+        if busy_heading:
+            content = '<section aria-busy="true">' + content + "</section>"
+        page = (
+            "<title>Product</title><body><"
+            + root_tag
+            + (' aria-busy="true"' if busy_main else "")
+            + ">"
+            + content
+            + '<section aria-busy="true">Recommendations loading</section></'
+            + root_tag
+            + ">"
+        )
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(
+                url, tmp_path / "result", Settings(browser_executable=CHROME, retain_partial=retain)
+            )
+        assert result.status == "partial", result
+        assert bool(result.html and result.png) == retained
+        if retained:
+            assert result.incomplete_regions == 1 and result.missing_resources == 0
+            html = Path(result.html.path).read_text()
+            assert "Product details" in html and "1 section was still loading" in html
+        else:
+            assert not (tmp_path / "result").exists()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "description,retained",
+    [
+        ("Price" + (" " * 400) + "$50", False),
+        ("Useful product description. " * 9, True),
+    ],
+)
+def test_primary_readability_uses_rendered_content_not_whitespace(
+    tmp_path, monkeypatch, description, retained
+):
+    async def scenario():
+        navigation = "<nav>" + ("Navigation item " * 60) + "</nav>" if not retained else ""
+        page = (
+            "<title>Product</title><body>"
+            + navigation
+            + "<main><h1>Product</h1><p>"
+            + description
+            + '</p><section aria-busy="true">Recommendations loading</section></main>'
+        )
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(
+                url, tmp_path / "result", Settings(browser_executable=CHROME, retain_partial=True)
+            )
+        assert result.status == "partial", result
+        assert bool(result.html and result.png) == retained
+
+    asyncio.run(scenario())
+
+
+def test_replacing_loading_region_after_snapshot_rejects_unreported_content(tmp_path, monkeypatch):
+    import importlib
+
+    module = importlib.import_module("page_archiver.capture")
+    serialize = module.serialize
+
+    async def swapped(page, *args, **kwargs):
+        result = await serialize(page, *args, **kwargs)
+        await page.evaluate("""() => {
+            document.querySelector('#recommendations').setAttribute('aria-busy','false');
+            document.querySelector('#reviews').setAttribute('aria-busy','true');
+        }""")
+        return result
+
+    monkeypatch.setattr(module, "serialize", swapped)
+
+    async def scenario():
+        page = (
+            "<title>Product</title><body><main><h1>Product details</h1><p>"
+            + ("Detailed specifications and description. " * 15)
+            + '</p><section id="recommendations" aria-busy="true">Recommendations loading</section><section id="reviews" aria-busy="false">Reviews</section></main>'
+        )
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(
+                url, tmp_path / "result", Settings(browser_executable=CHROME, retain_partial=True)
+            )
+        assert result.status == "partial" and not result.html and not result.png
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("headless", [True, False])
+@pytest.mark.skipif(
+    os.sys.platform != "darwin" and not os.environ.get("DISPLAY"),
+    reason="windowed browser needs a graphical session",
+)
+def test_configured_browser_mode_preserves_fresh_proxy_and_environment(
+    tmp_path, monkeypatch, headless
+):
+    calls = []
+    launch = BrowserType.launch
+
+    async def tracked(self, **kwargs):
+        calls.append(kwargs)
+        return await launch(self, **kwargs)
+
+    monkeypatch.setattr(BrowserType, "launch", tracked)
+    monkeypatch.setenv("PAGE_ARCHIVER_HUB_TOKEN", "must-not-reach-browser")
+
+    async def scenario():
+        async with fixture_server(
+            monkeypatch, "<title>Product</title><body><h1>Readable product</h1>"
+        ) as (url, _):
+            result = await capture(
+                url,
+                tmp_path / "result",
+                Settings(browser_executable=CHROME, browser_headless=headless),
+            )
+        assert result.status == "succeeded", result
+        assert len(calls) == 1 and calls[0]["headless"] is headless
+        assert calls[0]["proxy"]["server"].startswith("http://127.0.0.1:")
+        assert "PAGE_ARCHIVER_HUB_TOKEN" not in calls[0]["env"]
+        assert calls[0]["chromium_sandbox"] is True
+
+    asyncio.run(scenario())
+
+
+def test_declines_optional_cookie_consent_before_saving(tmp_path, monkeypatch):
+    async def scenario():
+        page = """<title>Product</title><body><h1>Product details</h1>
+        <div id="onetrust-consent-sdk"><div id="onetrust-banner-sdk" style="position:fixed;inset:0;background:white">Cookie choices cover the product</div></div>
+        <script>window.OneTrust={
+          RejectAll(){document.querySelector('#onetrust-banner-sdk').remove();document.body.dataset.consent='necessary-only'},
+          AllowAll(){document.body.dataset.consent='all'}
+        };</script>"""
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        html = Path(result.html.path).read_text()
+        assert "Cookie choices cover the product" not in html
+        assert 'data-consent="necessary-only"' in html
+        assert 'data-consent="all"' not in html
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("password", [False, True])
+def test_dismisses_optional_email_dialog_without_submitting(tmp_path, monkeypatch, password):
+    async def scenario():
+        page = """<title>Product</title><body><h1>Product details</h1>
+        <div role="dialog" aria-modal="true"><input type="email">
+        <button type="button" onclick="this.parentElement.remove();document.body.dataset.dismissed='true'">Continue to site</button>
+        <button type="submit" onclick="document.body.dataset.submitted='true'">Sign up</button>"""
+        if password:
+            page += '<input type="password">'
+        page += "</div>"
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        if password:
+            assert result.status == "succeeded", result
+            assert 'data-dismissed="true"' not in Path(result.html.path).read_text()
+        else:
+            assert result.status == "succeeded", result
+            html = Path(result.html.path).read_text()
+            assert 'data-dismissed="true"' in html
+            assert 'data-submitted="true"' not in html
+            assert "Continue to site" not in html
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("behavior", ["remove", "disabled", "stays"])
+def test_optional_dialog_dismissal_is_best_effort_and_keeps_identity(
+    tmp_path, monkeypatch, behavior
+):
+    async def scenario():
+        action = "this.parentElement.remove()" if behavior == "remove" else "void 0"
+        disabled = "disabled" if behavior == "disabled" else ""
+        page = f'''<title>Product</title><body><h1>Product details</h1>
+        <div role="dialog" aria-modal="true"><input type="email">
+        <button type="button" {disabled} onclick="{action}">Continue to site</button></div>
+        <div role="dialog" aria-modal="true">Unrelated visible dialog</div>'''
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+
+    asyncio.run(scenario())
+
+
+def test_dismisses_dialog_that_appears_during_serialization(tmp_path, monkeypatch):
+    import page_archiver.capture as module
+
+    original = module.serialize
+    calls = 0
+
+    async def late(page, *args):
+        nonlocal calls
+        if not calls:
+            await page.locator('[role="dialog"]').evaluate("el => el.hidden=false")
+        calls += 1
+        return await original(page, *args)
+
+    monkeypatch.setattr(module, "serialize", late)
+
+    async def scenario():
+        page = """<title>Product</title><body><h1>Product details</h1><img src="/missing.svg" width="100" height="100">
+        <div role="dialog" aria-modal="true" hidden><input type="email">
+        <button type="button" onclick="this.parentElement.remove()">Continue to site</button></div>"""
+        async with fixture_server(monkeypatch, page, resource_status=404) as (url, _):
+            result = await capture(
+                url, tmp_path / "result", Settings(browser_executable=CHROME, retain_partial=True)
+            )
+        assert result.status == "partial", result
+        assert f"{result.missing_resources} resource requests" in Path(result.html.path).read_text()
+        assert "Continue to site" not in Path(result.html.path).read_text()
 
     asyncio.run(scenario())

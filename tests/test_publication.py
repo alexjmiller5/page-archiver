@@ -227,20 +227,33 @@ def test_metadata_matches_shared_client_fixture(tmp_path):
     assert {k: failed[k] for k in contract["failure_fields"]} == contract["failure_fields"]
 
 
-def test_partial_capture_publishes_verified_artifacts_and_warning_idempotently(tmp_path):
+@pytest.mark.parametrize(
+    "missing,regions,warning",
+    [
+        (2, 0, "Incomplete archive: 2 resource requests could not be saved."),
+        (0, 1, "Incomplete archive: 1 section was still loading."),
+        (
+            2,
+            3,
+            "Incomplete archive: 2 resource requests could not be saved; 3 sections were still loading.",
+        ),
+    ],
+)
+def test_partial_capture_publishes_verified_artifacts_and_warning_idempotently(
+    tmp_path, missing, regions, warning
+):
     settings, job, attempt = context(tmp_path)
     outcome = staged(tmp_path / "spool/attempt-1")
     outcome.status = "partial"
-    outcome.missing_resources = 2
+    outcome.missing_resources = missing
+    outcome.incomplete_regions = regions
     hub = FakeHub()
 
     async def check():
         row = await publish_attempt(hub, settings, job, attempt, outcome)
         assert row["status"] == "partial"
         assert row["failure_code"] == "partial"
-        assert (
-            row["failure_detail"] == "Incomplete archive: 2 resource requests could not be saved."
-        )
+        assert row["failure_detail"] == warning
         assert row["captured_at"] and row["html_key"] and row["png_key"]
         assert len(hub.files) == 2
         assert await publish_attempt(hub, settings, job, attempt, outcome) == row

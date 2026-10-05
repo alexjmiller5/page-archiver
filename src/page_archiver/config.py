@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     min_screenshot_scale: float = Field(default=1.0, ge=0.5, le=1.0)
     retain_partial: bool = False
+    browser_headless: bool = True
 
     @classmethod
     def settings_customise_sources(

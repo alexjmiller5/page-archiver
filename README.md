@@ -143,14 +143,17 @@ The browser receives neither hub credentials nor a reused login profile.
 Captures are bounded by elapsed time, transfer bytes and image dimensions.
 Recognized CAPTCHA/login walls, partial HTTP responses and exceeded limits are
 failures. Missing archive resources fail by default or produce explicitly marked
-partial copies when retention is enabled. Loading placeholders and visibly busy content
-also fail. These checks are heuristics; success does not prove that a site supplied
+partial copies when retention is enabled. Unloaded primary content also fails.
+Readable pages with unfinished secondary sections can retain warned partial copies.
+These checks are heuristics; success does not prove that a site supplied
 all of its content. Failed background fetch/XHR requests are counted in the manifest's
 `page_request_failures` field, since a failed metrics request can leave content intact.
 Unused CSS rules are removed before fetching their assets, so missing images used
 only by absent elements do not invalidate a complete page. Missing retained images
 and styles prevent a complete-success classification.
-Initially empty pages get a bounded wait for rendered text. In-flight content
+Navigation waits for DOM content and gives the load event another five seconds;
+stalled images are counted even if the serializer omits them. Initially empty
+pages get a bounded wait for rendered text. In-flight content
 requests get up to five seconds to finish before capture; background long polls
 do not prevent an otherwise complete page from being saved. Serialization runs
 in an isolated browser world; where supported, the safe HTML parser handles
@@ -168,12 +171,28 @@ when the capturing machine has enough memory. `min_screenshot_scale` defaults to
 half resolution per dimension when needed to fit the pixel budget. HTML layout
 and fidelity are unchanged; pages needing a greater reduction remain too large.
 
-`retain_partial` defaults to false. When enabled, readable finished pages with
-missing images/fonts or other resource requests retain both artifacts with a
+`retain_partial` defaults to false. When enabled, readable pages with
+missing images/fonts, other resource requests or unfinished secondary sections retain both artifacts with a
 separate `partial` status, a visible HTML warning, and a safe count warning in
 metadata and `retrieve` output. Login gates, HTTP failures, blank pages and
-stuck loading screens still produce no artifacts. `status` counts partial
+stuck primary loading screens still produce no artifacts. Unfinished-section
+retention requires a visible primary heading and at least 200 visible content
+characters outside busy regions and navigation/footer/sidebar content. Busy
+primary landmarks and headings remain rejected. `status` counts partial
 captures separately from complete successes and failures.
+
+`browser_headless` defaults to true. In a graphical desktop session, set it to
+false to capture with a fresh windowed browser. Both modes use the same capture
+deadline, public-network proxy and credential isolation. Neither attaches to an
+existing browser profile; login/CAPTCHA pages remain failures. For a single
+capture, set `PAGE_ARCHIVER_BROWSER_HEADLESS=false` in that command's environment.
+
+When a OneTrust consent dialog is present, capture uses its documented
+[reject-all method](https://developer.onetrust.com/onetrust/docs/javascript-api)
+to decline optional cookies before saving. The choice stays in the temporary
+browser session; no consent is accepted and no existing profile is changed.
+Visible email signup dialogs can be dismissed through an explicit non-submitting
+"Continue to site" button. Password dialogs are excluded; no form is filled.
 
 A capture records what the external site serves when fetched. It cannot recover
 content that changed or disappeared before capture. Video/audio and embedded

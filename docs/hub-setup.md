@@ -53,9 +53,11 @@ supplies `hub_at`. All submitted dates use UTC milliseconds ending in `Z`.
 | `<kind>_mime`, `<kind>_bytes`, `<kind>_sha256` | Exact MIME, byte count and lowercase SHA-256 for HTML or PNG |
 
 Every `succeeded` or `partial` row contains both verified artifact groups and
-`captured_at`. A `partial` row is a readable page with missing resource requests,
+`captured_at`. A `partial` row is a readable page with missing resource requests
+or unfinished secondary sections,
 not a complete capture: `failure_code` is `partial` and `failure_detail` carries
-a warning with the missing request count. Viewers must display that warning and
+a warning with positive missing-request and/or unfinished-section counts. A page
+whose primary content has not loaded retains no artifacts. Viewers must display that warning and
 allow independently authorized artifact retrieval for both retained statuses.
 Every `blocked`, `failed` or `unsupported` row has both groups and `captured_at`
 null. Existing failures with code `partial` have no retained artifacts. Metadata is inserted once per attempt.

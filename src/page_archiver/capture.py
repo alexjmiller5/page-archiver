@@ -45,6 +45,7 @@ class Outcome(BaseModel):
     png: Artifact | None = None
     page_request_failures: int = 0
     missing_resources: int = 0
+    incomplete_regions: int = 0
 
 
 @dataclass
@@ -55,6 +56,44 @@ class Rendered:
     title: str
     missing_resources: int
     page_request_failures: int = 0
+    incomplete_regions: int = 0
+
+
+def partial_warning(missing: int, regions: int) -> str:
+    parts = []
+    if missing:
+        parts.append(f"{missing} resource requests could not be saved")
+    if regions:
+        parts.append(f"{regions} section{' was' if regions == 1 else 's were'} still loading")
+    return "Incomplete archive: " + "; ".join(parts) + "." if parts else ""
+
+
+async def unfinished_sections(page) -> list:
+    """Retain secondary loading regions only around readable primary content."""
+    regions = await page.locator('[aria-busy="true"]:visible').element_handles()
+    if not regions:
+        return []
+    ready = await page.evaluate(r"""() => {
+        const ignored = '[aria-busy="true"],header,footer,nav,aside,script,style,' +
+            '[role="banner"],[role="contentinfo"],[role="navigation"],' +
+            '[role="complementary"],[hidden],[aria-hidden="true"]';
+        const visible = e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+        const root = document.querySelector('main,[role="main"]') || document.body;
+        if (root.closest('[aria-busy="true"]')) return false;
+        const heading = [...root.querySelectorAll('h1,[role="heading"][aria-level="1"]')]
+            .some(e => visible(e) && !e.closest(ignored) && e.innerText.trim());
+        if (!heading) return false;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let text = '', node;
+        while ((node = walker.nextNode())) {
+            const e = node.parentElement;
+            if (e && visible(e) && !e.closest(ignored)) text += node.textContent;
+        }
+        return text.replace(/\s+/g, ' ').trim().length >= 200;
+    }""")
+    if not ready:
+        raise CaptureFailure("partial")
+    return regions
 
 
 def browser_executable(settings: Settings) -> str:
@@ -74,11 +113,17 @@ def browser_executable(settings: Settings) -> str:
     raise CaptureFailure("browser_unavailable")
 
 
-def classify_page(title: str, text: str, password: bool) -> None:
-    if len(text) < 500 and re.search(
-        r"\b(loading(?:\s+(?:product|page|content|details))?|please wait|failed to load|unable to load)\b",
-        text,
-        re.I,
+def classify_page(
+    title: str, text: str, password: bool, *, secondary_loading: bool = False
+) -> None:
+    if (
+        not secondary_loading
+        and len(text) < 500
+        and re.search(
+            r"\b(loading(?:\s+(?:product|page|content|details))?|please wait|failed to load|unable to load)\b",
+            text,
+            re.I,
+        )
     ):
         raise CaptureFailure("partial")
     if len(text) < 3000 and re.search(
@@ -105,7 +150,46 @@ def classify_page(title: str, text: str, password: bool) -> None:
         raise CaptureFailure("empty")
 
 
-async def serialize(page, script: str, resource) -> str:
+async def dismiss_optional_dialogs(page) -> bool:
+    changed = False
+    banner = page.locator("#onetrust-banner-sdk")
+    if await banner.is_visible():
+        rejected = await page.evaluate("""() => {
+            if (typeof window.OneTrust?.RejectAll !== 'function') return false;
+            try { window.OneTrust.RejectAll(); return true; }
+            catch { return false; }
+        }""")
+        if rejected:
+            try:
+                await banner.wait_for(state="hidden", timeout=2000)
+                changed = True
+            except BrowserTimeout:
+                pass
+    # Keep element identity as visible dialogs are removed from the document.
+    for dialog in await page.locator(
+        '[role="dialog"][aria-modal="true"]:visible'
+    ).element_handles():
+        try:
+            if not await dialog.query_selector('input[type="email"]'):
+                continue
+            if await dialog.query_selector('input[type="password"]'):
+                continue
+            buttons = []
+            for button in await dialog.query_selector_all('button[type="button"]'):
+                if re.fullmatch(r"\s*Continue to site\s*", await button.inner_text(), re.I):
+                    buttons.append(button)
+            if len(buttons) != 1 or not await buttons[0].is_visible():
+                continue
+            await buttons[0].click(timeout=2000)
+            await dialog.wait_for_element_state("hidden", timeout=2000)
+            changed = True
+        except BrowserError:
+            # Optional UI must not turn readable content into a failed capture.
+            pass
+    return changed
+
+
+async def serialize(page, script: str, resource, incomplete_regions: int = 0) -> tuple[str, int]:
     """Run the serializer in its own world without changing the site's CSP."""
     session = await page.context.new_cdp_session(page)
     tasks = set()
@@ -181,6 +265,13 @@ async def serialize(page, script: str, resource) -> str:
         })()""")
         await evaluate(script)
         html = await evaluate("globalThis.__archivePage()")
+        # SingleFile can omit an image whose dimensions never became available.
+        # Such a snapshot must not become a complete success merely because the
+        # serializer never asked us to fetch that image.
+        unloaded_images = await page.locator("img").evaluate_all("""images => images.filter(img =>
+            /^https?:/i.test(img.currentSrc || img.src) && img.getClientRects().length &&
+            getComputedStyle(img).visibility !== 'hidden' &&
+            (!img.complete || !img.naturalWidth)).length""")
         # Final cleanup needs an inert parser that preserves declarative shadow
         # templates. A fresh offline document has no source-site Trusted Types
         # policy, so no policy is weakened and no unsafe HTML sink is necessary.
@@ -190,10 +281,14 @@ async def serialize(page, script: str, resource) -> str:
         try:
             document = await cleanup.new_page()
             await document.evaluate(script)
-            return await document.evaluate(
-                "args => globalThis.__archiveFinalize(args.html, args.missing)",
-                {"html": html, "missing": missing},
+            cleaned = await document.evaluate(
+                "args => globalThis.__archiveFinalize(args.html, args.warning)",
+                {
+                    "html": html,
+                    "warning": partial_warning(missing + unloaded_images, incomplete_regions),
+                },
             )
+            return cleaned, unloaded_images
         finally:
             await cleanup.close()
     finally:
@@ -233,7 +328,7 @@ async def _render(url: str, settings: Settings) -> Rendered:
         }
         browser = await driver.chromium.launch(
             executable_path=executable,
-            headless=True,
+            headless=settings.browser_headless,
             chromium_sandbox=True,
             proxy={"server": proxy_url, "bypass": "<-loopback>"},
             env=browser_env,
@@ -327,7 +422,7 @@ async def _render(url: str, settings: Settings) -> Rendered:
                 page.on("requestfailed", request_failed)
                 page.on("response", response_received)
                 page.set_default_timeout(15000)
-                response = await page.goto(url, wait_until="load", timeout=45000)
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
                 if response is None or response.status >= 400:
                     raise CaptureFailure("http_error")
                 if response.status == 206:
@@ -338,6 +433,13 @@ async def _render(url: str, settings: Settings) -> Rendered:
                     raise CaptureFailure("blocked_destination") from None
                 if "text/html" not in response.headers.get("content-type", ""):
                     raise CaptureFailure("unsupported_content")
+                try:
+                    await page.wait_for_load_state("load", timeout=5000)
+                except BrowserTimeout:
+                    # A stalled asset must not hide an otherwise readable page.
+                    # Serialization and live-image checks report missing assets.
+                    pass
+                await dismiss_optional_dialogs(page)
                 try:
                     # Locator reads avoid a page-side eval on later polling ticks,
                     # which strict Trusted Types policies reject.
@@ -354,16 +456,17 @@ async def _render(url: str, settings: Settings) -> Rendered:
                 except TimeoutError:
                     # Background long polls need not finish for a page to be
                     # complete, but an explicitly busy main view must not pass.
-                    if await page.locator('[aria-busy="true"]:visible').count():
-                        raise CaptureFailure("partial") from None
+                    await unfinished_sections(page)
                 readiness_deadline = asyncio.get_running_loop().time() + 15
                 while True:
                     title = await page.title()
                     try:
+                        pending_regions = await unfinished_sections(page)
                         classify_page(
                             title,
                             await page.locator("body").inner_text(),
                             await page.locator("input[type=password]:visible").count() > 0,
+                            secondary_loading=bool(pending_regions),
                         )
                         break
                     except CaptureFailure as error:
@@ -373,7 +476,22 @@ async def _render(url: str, settings: Settings) -> Rendered:
                         ):
                             raise
                         await asyncio.sleep(0.1)
-                html = await serialize(page, asset.read_text(), resource)
+                await dismiss_optional_dialogs(page)
+                pending_regions = await unfinished_sections(page)
+                incomplete_regions = len(pending_regions)
+                if incomplete_regions and not settings.retain_partial:
+                    raise CaptureFailure("partial")
+                html, unloaded_images = await serialize(
+                    page, asset.read_text(), resource, incomplete_regions
+                )
+                # Deferred-content loading can reveal a late opt-out dialog.
+                # Retry serialization once after a supported dismissal.
+                if await dismiss_optional_dialogs(page):
+                    missing = 0
+                    html, unloaded_images = await serialize(
+                        page, asset.read_text(), resource, incomplete_regions
+                    )
+                missing += unloaded_images
                 # Match Playwright's disabled-animation screenshots. This
                 # fresh page is closed after capture, so no restoration is
                 # needed. Include animations inside open shadow roots.
@@ -435,14 +553,23 @@ async def _render(url: str, settings: Settings) -> Rendered:
                         await session.detach()
                 if proxy.exhausted or fetched > 200 * 1024 * 1024:
                     raise CaptureFailure("too_large")
-                if await page.locator('[aria-busy="true"]:visible').count():
+                remaining_regions = await unfinished_sections(page)
+                if not await page.evaluate(
+                    "args => args.current.every(node => args.previous.includes(node))",
+                    {"previous": pending_regions, "current": remaining_regions},
+                ):
+                    # Newly loading content was not represented in the saved
+                    # warning. Do not publish an understated partial capture.
                     raise CaptureFailure("partial")
                 classify_page(
                     await page.title(),
                     await page.locator("body").inner_text(),
                     await page.locator("input[type=password]:visible").count() > 0,
+                    secondary_loading=bool(remaining_regions),
                 )
-                return Rendered(html, png, page.url, title, missing, len(content_failures))
+                return Rendered(
+                    html, png, page.url, title, missing, len(content_failures), incomplete_regions
+                )
         finally:
             await browser.close()
 
@@ -460,7 +587,8 @@ async def capture(url: str, destination: Path, settings: Settings) -> Outcome:
             rendered = await _render(url, settings)
         if not rendered.html or not rendered.html.strip():
             raise CaptureFailure("empty")
-        if rendered.missing_resources and not settings.retain_partial:
+        incomplete = rendered.missing_resources or rendered.incomplete_regions
+        if incomplete and not settings.retain_partial:
             raise CaptureFailure("partial")
         html = rendered.html.encode("utf-8")
         if max(len(html), len(rendered.png)) > settings.max_artifact_bytes:
@@ -475,8 +603,9 @@ async def capture(url: str, destination: Path, settings: Settings) -> Outcome:
         if width * height > settings.max_screenshot_pixels:
             raise CaptureFailure("too_large")
         result = Outcome(
-            status="partial" if rendered.missing_resources else "succeeded",
+            status="partial" if incomplete else "succeeded",
             missing_resources=rendered.missing_resources,
+            incomplete_regions=rendered.incomplete_regions,
             captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             final_url=rendered.final_url,
             title=rendered.title,
