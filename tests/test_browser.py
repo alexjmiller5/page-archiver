@@ -439,3 +439,14 @@ def test_resource_requests_identify_archiver_without_credentials(tmp_path, monke
         )
 
     asyncio.run(scenario())
+
+
+def test_waits_for_loading_screen_to_become_content(tmp_path, monkeypatch):
+    async def scenario():
+        page = '<title>Article</title><body>Loading page...<script>setTimeout(() => { document.body.textContent = "Ready article body"; }, 2000)</script>'
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        assert "Ready article body" in Path(result.html.path).read_text()
+
+    asyncio.run(scenario())

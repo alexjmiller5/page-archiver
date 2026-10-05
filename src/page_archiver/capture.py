@@ -345,12 +345,23 @@ async def _render(url: str, settings: Settings) -> Rendered:
                     # complete, but an explicitly busy main view must not pass.
                     if await page.locator('[aria-busy="true"]:visible').count():
                         raise CaptureFailure("partial") from None
-                title = await page.title()
-                classify_page(
-                    title,
-                    await page.locator("body").inner_text(),
-                    await page.locator("input[type=password]:visible").count() > 0,
-                )
+                readiness_deadline = asyncio.get_running_loop().time() + 15
+                while True:
+                    title = await page.title()
+                    try:
+                        classify_page(
+                            title,
+                            await page.locator("body").inner_text(),
+                            await page.locator("input[type=password]:visible").count() > 0,
+                        )
+                        break
+                    except CaptureFailure as error:
+                        if (
+                            str(error) != "partial"
+                            or asyncio.get_running_loop().time() >= readiness_deadline
+                        ):
+                            raise
+                        await asyncio.sleep(0.1)
                 html = await serialize(page, asset.read_text(), resource)
                 dimensions = await page.evaluate(
                     "({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})"
