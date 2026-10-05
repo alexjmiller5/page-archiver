@@ -91,9 +91,12 @@ def classify_page(title: str, text: str, password: bool) -> None:
         re.I,
     ):
         raise CaptureFailure("blocked")
-    if re.search(r"sign[ -]?in|log[ -]?in", title, re.I) and (
+    if re.search(r"\b(?:sign[ -]?in|log[ -]?in)\b", title, re.I) and (
         password
-        or (len(text) < 3000 and re.search(r"sign[ -]?in|log[ -]?in|continue with", text, re.I))
+        or (
+            len(text) < 3000
+            and re.search(r"\b(?:sign[ -]?in|log[ -]?in|continue with)\b", text, re.I)
+        )
     ):
         raise CaptureFailure("login_required")
     if not text.strip():

@@ -450,3 +450,15 @@ def test_waits_for_loading_screen_to_become_content(tmp_path, monkeypatch):
         assert "Ready article body" in Path(result.html.path).read_text()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("title", ["Design Inspiration", "Blog Index"])
+def test_public_titles_containing_login_substrings_capture(tmp_path, monkeypatch, title):
+    async def scenario():
+        page = f"<title>{title}</title><body><nav>Sign in</nav><main>Public articles and examples</main>"
+        async with fixture_server(monkeypatch, page) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        assert "Public articles and examples" in Path(result.html.path).read_text()
+
+    asyncio.run(scenario())
