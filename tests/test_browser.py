@@ -25,7 +25,14 @@ pytestmark = pytest.mark.skipif(not Path(CHROME).exists(), reason="installed Chr
 
 @asynccontextmanager
 async def fixture_server(
-    monkeypatch, page, status=200, resource_status=200, *, secure=False, data_delay=0
+    monkeypatch,
+    page,
+    status=200,
+    resource_status=200,
+    *,
+    secure=False,
+    data_delay=0,
+    require_identification=False,
 ):
     requests = []
 
@@ -51,9 +58,12 @@ async def fixture_server(
                 )
             else:
                 mime, body = "text/plain", "unexpected"
+            response_status = status if path == "/" else resource_status
+            if require_identification and path == "/image.svg" and b"PageArchiver/" not in raw:
+                response_status = 403
             data = body.encode()
             writer.write(
-                f"HTTP/1.1 {status if path == '/' else resource_status} Fixture\r\nContent-Type: {mime}\r\nContent-Length: {len(data)}\r\nConnection: close\r\n\r\n".encode()
+                f"HTTP/1.1 {response_status} Fixture\r\nContent-Type: {mime}\r\nContent-Length: {len(data)}\r\nConnection: close\r\n\r\n".encode()
                 + data
             )
             await writer.drain()
@@ -407,5 +417,25 @@ def test_tall_pages_keep_full_resolution_within_configured_pixel_budget(
             assert "End of article" in Path(result.html.path).read_text()
         else:
             assert not (tmp_path / "result").exists()
+
+    asyncio.run(scenario())
+
+
+def test_resource_requests_identify_archiver_without_credentials(tmp_path, monkeypatch):
+    async def scenario():
+        page = '<title>Public article</title><body>Article<img src="/image.svg">'
+        async with fixture_server(monkeypatch, page, require_identification=True) as (
+            url,
+            requests,
+        ):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        assert "data:image/svg+xml" in Path(result.html.path).read_text()
+        identified = [raw for raw in requests if b"PageArchiver/" in raw]
+        assert identified
+        assert all(
+            b"authorization:" not in raw.lower() and b"cookie:" not in raw.lower()
+            for raw in identified
+        )
 
     asyncio.run(scenario())

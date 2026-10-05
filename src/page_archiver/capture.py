@@ -12,6 +12,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from importlib.metadata import version
 
 import httpx
 from playwright.async_api import Error as BrowserError
@@ -252,6 +253,9 @@ async def _render(url: str, settings: Settings) -> Rendered:
 
             await context.route("**/*", route_request)
             async with httpx.AsyncClient(
+                headers={
+                    "User-Agent": f"PageArchiver/{version('page-archiver')} (+https://github.com/alexjmiller5/page-archiver)"
+                },
                 proxy=proxy_url,
                 trust_env=False,
                 timeout=10,
