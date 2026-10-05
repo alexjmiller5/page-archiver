@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
-from playwright.async_api import async_playwright
+from playwright.async_api import BrowserType, async_playwright
 
 from page_archiver.capture import browser_executable, capture
 from page_archiver.config import Settings
@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(not Path(CHROME).exists(), reason="installed Chr
 
 
 @asynccontextmanager
-async def fixture_server(monkeypatch, page, status=200, resource_status=200):
+async def fixture_server(monkeypatch, page, status=200, resource_status=200, *, secure=False):
     requests = []
 
     async def handle(reader, writer):
@@ -65,6 +65,19 @@ async def fixture_server(monkeypatch, page, status=200, resource_status=200):
             ["127.0.0.1"] if host == "fixture.example" else public_addresses(host, port)
         ),
     )
+    if secure:
+        launch = BrowserType.launch
+
+        async def secure_fixture(browser_type, **kwargs):
+            # Trusted Types requires a secure context. Trust only this test origin;
+            # production capture never relaxes transport or page policy.
+            kwargs["args"] = [
+                *kwargs.get("args", []),
+                f"--unsafely-treat-insecure-origin-as-secure=http://fixture.example:{port}",
+            ]
+            return await launch(browser_type, **kwargs)
+
+        monkeypatch.setattr(BrowserType, "launch", secure_fixture)
     try:
         yield f"http://fixture.example:{port}/", requests
     finally:
@@ -320,13 +333,28 @@ def test_delayed_article_content_is_allowed_to_render(tmp_path, monkeypatch):
 
 def test_trusted_types_site_captures_without_relaxing_site_policy(tmp_path, monkeypatch):
     async def scenario():
-        page = """<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types 'none'; script-src 'nonce-fixture'"><title>Article</title><body><h1>Protected article</h1><p id="nested"></p><img src="/image.svg"><script nonce="fixture">const nested = document.createElement('div'); nested.textContent = 'Nested content'; document.getElementById('nested').appendChild(nested);</script><script>document.querySelector('h1').textContent='Unwanted script';</script>"""
-        async with fixture_server(monkeypatch, page) as (url, _):
+        page = """<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types 'none'; script-src 'nonce-fixture'"><title>Article</title><body><p id="nested"></p><img src="/image.svg"><script nonce="fixture">setTimeout(() => { const heading = document.createElement('h1'); heading.textContent = 'Protected article'; heading.dataset.secure = String(window.isSecureContext); document.body.appendChild(heading); const nested = document.createElement('div'); nested.textContent = 'Nested content'; document.getElementById('nested').appendChild(nested); }, 300);</script><script>document.body.textContent='Unwanted script';</script>"""
+        async with fixture_server(monkeypatch, page, secure=True) as (url, _):
             result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
         assert result.status == "succeeded", result
         html = Path(result.html.path).read_text()
         assert "Protected article" in html
+        assert 'data-secure="true"' in html
         assert "Unwanted script" not in html
         assert "data:image/svg+xml" in html
+
+    asyncio.run(scenario())
+
+
+def test_trusted_types_shadow_scripts_are_excluded_without_rewriting(tmp_path, monkeypatch):
+    async def scenario():
+        page = """<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types 'none'"><title>Shadow article</title><body><h1>Public article</h1><div><template shadowrootmode="open"><p>Retained shadow content</p><script type="application/json">{"state":"private-script-data"}</script></template></div>"""
+        async with fixture_server(monkeypatch, page, secure=True) as (url, _):
+            result = await capture(url, tmp_path / "result", Settings(browser_executable=CHROME))
+        assert result.status == "succeeded", result
+        html = Path(result.html.path).read_text()
+        assert "Retained shadow content" in html
+        assert "private-script-data" not in html
+        assert "<script" not in html
 
     asyncio.run(scenario())

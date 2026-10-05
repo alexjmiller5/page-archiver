@@ -6,6 +6,7 @@ from page_archiver.config import Settings
 
 def test_defaults_use_standard_state_directory(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.delenv("XDG_STATE_HOME", raising=False)
     settings = Settings()
     assert settings.state_dir.is_absolute()

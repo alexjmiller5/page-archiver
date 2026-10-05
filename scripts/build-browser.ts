@@ -26,5 +26,5 @@ for (const file of files) {
 }
 await Bun.write('src/page_archiver/assets/THIRD_PARTY_NOTICES.txt',
   'SingleFile Core 1.6.22: https://github.com/gildas-lormeau/single-file-core\n' +
-  'Modified by the bundled patch for DOM form-field shadowing, raw-text nesting markers, and script-free nesting repair.\n\n' +
+  'Modified by the bundled patch for DOM form-field shadowing, raw-text nesting markers, script-free nesting repair, and excluded-script normalization.\n\n' +
   [...notices].join('\n\n'));

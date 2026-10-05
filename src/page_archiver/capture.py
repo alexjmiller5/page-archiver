@@ -142,9 +142,6 @@ async def serialize(page, script: str, resource) -> str:
             "Runtime.addBinding", {"name": "__archiveSend", "executionContextName": "page-archiver"}
         )
         await evaluate("""(() => {
-          // Scripts are excluded from retained output; remove them before the
-          // serializer tries to normalize their text through TrustedScript sinks.
-          document.querySelectorAll('script').forEach(element => element.remove());
           // Only this isolated world's parser changes. The site's policy and
           // parser remain untouched. The safe HTML sink removes scripts and
           // handlers without needing a permissive Trusted Types policy.
@@ -174,7 +171,19 @@ async def serialize(page, script: str, resource) -> str:
           };
         })()""")
         await evaluate(script)
-        return await evaluate("globalThis.__archivePage()")
+        html = await evaluate("globalThis.__archivePage()")
+        # Final cleanup needs an inert parser that preserves declarative shadow
+        # templates. A fresh offline document has no source-site Trusted Types
+        # policy, so no policy is weakened and no unsafe HTML sink is necessary.
+        cleanup = await page.context.browser.new_context(
+            offline=True, service_workers="block", accept_downloads=False
+        )
+        try:
+            document = await cleanup.new_page()
+            await document.evaluate(script)
+            return await document.evaluate("html => globalThis.__archiveFinalize(html)", html)
+        finally:
+            await cleanup.close()
     finally:
         for task in tasks:
             task.cancel()
@@ -315,10 +324,12 @@ async def _render(url: str, settings: Settings) -> Rendered:
                 if "text/html" not in response.headers.get("content-type", ""):
                     raise CaptureFailure("unsupported_content")
                 try:
-                    await page.wait_for_function(
-                        "document.body && document.body.innerText.trim().length > 0", timeout=5000
-                    )
-                except BrowserTimeout:
+                    # Locator reads avoid a page-side eval on later polling ticks,
+                    # which strict Trusted Types policies reject.
+                    async with asyncio.timeout(5):
+                        while not (await page.locator("body").inner_text()).strip():
+                            await asyncio.sleep(0.05)
+                except (TimeoutError, BrowserTimeout):
                     raise CaptureFailure("empty") from None
                 await page.evaluate("document.fonts.ready")
                 try:

@@ -40,10 +40,14 @@ globalThis.__archivePage = async () => {
     maxResourceSizeEnabled: true,
     maxResourceSize: 20,
   }, { fetch: fetchResource });
+  return data.content;
+};
+
+globalThis.__archiveFinalize = content => {
   // SingleFile can add its own layout-repair script even with blockScripts.
   // Apply that repair now to an inert document, then retain no runnable script.
   // This does not make arbitrary archived HTML trusted viewer content.
-  const saved = new DOMParser().parseFromString(data.content, 'text/html');
+  const saved = new DOMParser().parseFromString(content, 'text/html');
   helper.fixInvalidNesting(saved, helper.NESTING_TRACK_ID_ATTRIBUTE_NAME);
   saved.querySelectorAll('script,meta[http-equiv="refresh"],meta[http-equiv="content-security-policy"]').forEach(element => element.remove());
   const policy = saved.createElement('meta');
