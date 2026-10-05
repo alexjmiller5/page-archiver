@@ -7,7 +7,11 @@ let
   environment = {
     XDG_CONFIG_HOME = config.xdg.configHome;
     HOME = config.home.homeDirectory;
-  } // cfg.service.environment;
+  } // cfg.service.environment // {
+    # Include configuration in the service definition so activation reloads the
+    # long-running process even when its executable and environment are unchanged.
+    PAGE_ARCHIVER_SETTINGS_HASH = builtins.hashString "sha256" (builtins.toJSON cfg.settings);
+  };
 in
 {
   options.programs.page-archiver = {

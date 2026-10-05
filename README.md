@@ -104,6 +104,8 @@ programs.page-archiver = {
 
 The service executes the Nix package. Nonsecret environment preparation belongs
 in `service.environment`. macOS uses launchd; Linux uses a user systemd service.
+Changing Nix settings changes the service definition, so activation reloads the
+runner with the new configuration even when the package has not changed.
 On macOS the job starts in the user's GUI domain, where the browser is available.
 Network failures retry inside the process. Authentication or integrity failures
 halt with a stable status code and exit 78; repair the credential/configuration
