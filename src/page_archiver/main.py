@@ -16,6 +16,14 @@ from page_archiver.runner import Runner, retry_hub
 from page_archiver.capture import capture
 from page_archiver.config import Settings
 from page_archiver.state import Store
+from page_archiver.discovery import STATUSES, coverage, list_captures
+
+
+def positive(value):
+    number = int(value)
+    if not 1 <= number <= 10000:
+        raise argparse.ArgumentTypeError("must be between 1 and 10000")
+    return number
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,6 +32,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="Show durable local work counts without contacting the hub")
+    for name in ("list", "search"):
+        listing = commands.add_parser(name, help="Read published capture history with continuation")
+        if name == "search":
+            listing.add_argument("query", help="Literal, case-sensitive URL substring")
+        for flag in ("source-table", "source-row", "source-column", "url"):
+            listing.add_argument("--" + flag)
+        listing.add_argument("--status", choices=STATUSES)
+        listing.add_argument("--after", help="Resume after the previous next_cursor")
+        listing.add_argument(
+            "--limit", type=positive, default=100, help="Maximum matches (one hub page per call)"
+        )
+    report = commands.add_parser(
+        "coverage", help="Report archives for current source URLs without queuing work"
+    )
+    report.add_argument(
+        "--max-pages",
+        type=positive,
+        default=1000,
+        help="Fail if any table exceeds this scan budget",
+    )
     capture_parser = commands.add_parser(
         "capture", help="Capture one public page into a new directory"
     )
@@ -47,7 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     except (ValidationError, SettingsError):
         error, code = "invalid_configuration", 78
     except HubError as problem:
-        error, code = problem.code, 78 if problem.fatal else 1
+        body = {"error": problem.code}
+        if problem.retry_after is not None:
+            body["retry_after"] = min(3600, max(1, problem.retry_after))
+        print(json.dumps(body))
+        return 78 if problem.fatal else 1
     except (ValueError, RuntimeError):
         error, code = "local_state_conflict", 78
     except (OSError, sqlite3.Error):
@@ -74,6 +106,11 @@ def execute(args) -> int:
 
 async def hub_command(args, settings):
     async with HubClient(settings) as hub:
+        if args.command in {"list", "search", "coverage"}:
+            await hub.session()
+            if args.command == "coverage":
+                return await coverage(hub, settings, max_pages=args.max_pages)
+            return await list_captures(hub, settings, args)
         if args.command == "retrieve":
             await hub.session()
             return await retrieve(hub, settings, args.attempt_id, args.output.absolute())
