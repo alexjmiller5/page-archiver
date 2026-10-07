@@ -135,6 +135,53 @@ bytes against metadata. It requires a new output directory, writes HTML, PNG and
 metadata, and never opens HTML automatically. Retained files remain in the hub
 when the runner is disabled or its local staged bytes are cleaned up.
 
+## Find captures and check coverage
+
+Use the same consumer configuration and credential as the background service:
+
+```sh
+page-archiver list --status partial
+page-archiver list --source-table articles --source-row <row-id> --source-column url
+page-archiver search example.com --limit 20
+page-archiver search example.com --after <next_cursor>
+page-archiver coverage
+```
+
+All three commands emit JSON and only read. They never queue captures, acknowledge
+events, retry jobs, edit source rows or download artifacts. `list` and `search`
+return immutable attempt `id` values for `retrieve`, including observations whose
+source URL changed or whose source row was deleted. `--url` is an exact URL filter;
+search is a literal, case-sensitive substring of the URL, not archived page text.
+Results use ascending attempt-ID order, not date order. Each invocation scans at
+most one hub page (100 rows), and `--limit` can reduce the returned matches.
+Continue with `next_cursor` until it is null, even when a page has no matches.
+
+Coverage groups current nondeleted source rows by table, row ID, column and exact
+URL. Empty/null URLs are skipped; nonempty invalid URLs remain reportable. Two
+source records with the same URL count separately. It prefers a retained succeeded
+attempt, then a retained partial, and reports a matching queued/active local job
+independently. A later failed retry never erases an older retained archive.
+Without an archive it reports pending, latest terminal failure, or uncaptured.
+The `failed` count combines blocked, unsupported and failed terminal outcomes;
+`latest_status` and `failure_code` preserve that distinction.
+
+Queue visibility requires an existing local queue bound to the same consumer
+configuration. A remote client or unavailable/mismatched queue reports
+`queue_visibility: unknown` and `pending: null`. Without a retained archive its
+coverage is `pending_unknown`, while any latest published attempt remains visible.
+No local queue is created or migrated. Known queue state only describes locally
+accepted work; it cannot prove the subscription has no undelivered events.
+
+Reports measure archive availability for the current URL, not the latest source
+revision or the external site's present contents. They include retained revision
+and timestamps, scan start/end, and `atomic_snapshot: false`: source tables,
+metadata and the local queue are not one atomic snapshot. Metadata reports do not
+reverify files (`artifacts_verified: false`); use `retrieve` for byte verification.
+Coverage reads every page and fails rather than reporting incomplete totals if
+any table exceeds `--max-pages` (default 1000). Increase it explicitly for a larger
+archive. Hub denials, outages, malformed pages and caps exit nonzero without
+coverage totals. Cap errors include a retry delay bounded to one hour.
+
 ## Capture boundaries
 
 Only public HTTP(S) destinations are allowed. The local capture proxy resolves

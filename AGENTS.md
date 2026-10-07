@@ -18,6 +18,11 @@ a fresh browser, the same public proxy and the same capture deadline.
 ## Ownership
 
 The application owns its standard state directory, SQLite queue and capture spool.
+Discovery commands (`list`, `search`, `coverage`) only read supported hub APIs.
+Coverage uses current source table/row/column/exact URL, preserves the best retained
+archive across later failures, and reads matching local pending work without queue
+creation or migration. Unavailable queue state is unknown, never zero. Metadata
+availability is distinct from verified artifact bytes and newest-revision coverage.
 Life Data is an approved shared service, accessed only through its supported row,
 subscription and file APIs with an independently revocable consumer credential.
 It owns retained captures and metadata. Removal of this consumer preserves retained
