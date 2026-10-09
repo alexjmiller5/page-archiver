@@ -353,3 +353,19 @@ def test_retained_partial_has_its_own_terminal_count(tmp_path):
         assert store.status()["partial"] == 1
         assert store.status()["succeeded"] == store.status()["failed"] == 0
         assert store.next_job() is None
+
+
+def test_moving_the_hub_rebinds_only_its_url(tmp_path):
+    with Store(tmp_path) as store:
+        store.bind_consumer("https://old.test", "subscription-1", "captures", "captures/")
+        for changed in [
+            ("https://new.test", "subscription-2", "captures", "captures/"),
+            ("https://new.test", "subscription-1", "other", "captures/"),
+            ("https://new.test", "subscription-1", "captures", "other/"),
+        ]:
+            with pytest.raises(ValueError, match="consumer_configuration_changed"):
+                store.move_hub(*changed)
+        store.move_hub("https://new.test", "subscription-1", "captures", "captures/")
+        store.bind_consumer("https://new.test", "subscription-1", "captures", "captures/")
+        with pytest.raises(ValueError, match="consumer_configuration_changed"):
+            store.bind_consumer("https://old.test", "subscription-1", "captures", "captures/")

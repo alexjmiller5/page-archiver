@@ -72,6 +72,7 @@ page-archiver status
 page-archiver run-once
 page-archiver retry <capture-id>
 page-archiver retrieve <attempt-id> --output ./retained-page
+page-archiver move-hub
 ```
 
 `watch` long-polls for up to 30 seconds while one separate worker captures pages.
@@ -85,6 +86,11 @@ or starts a fresh scan after completion. Repeated observations deduplicate.
 Run it alongside the watcher so queued work can drain. A failure exits nonzero;
 rerun after resolving the reported code. `run-once` performs one intake and one
 capture without becoming a service.
+
+Local work is bound to its hub URL, subscription, table and prefix; a changed
+setting stops the service with `local_state_conflict`. When the same hub moves to a
+new URL, configure it and run `move-hub` once: it confirms the subscription answers
+there with this credential, then rebinds only the URL.
 
 The Home Manager module owns the service definition:
 

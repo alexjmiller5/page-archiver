@@ -180,3 +180,49 @@ def test_run_once_drains_existing_work_under_intake_backpressure(monkeypatch, tm
         assert store.status()["failed"] == 2 and store.status()["queued"] == 99
         assert store.status()["events"] == 101 and store.status()["pending_acks"] == 0
     assert len(hub.metadata) == 2
+
+
+def test_move_hub_rebinds_after_the_subscription_answers_at_the_new_url(
+    monkeypatch, tmp_path, capsys
+):
+    from page_archiver.state import Store
+    from test_client import settings
+
+    configured = settings(state_dir=tmp_path, hub_token="fixture-secret")
+    with Store(tmp_path) as store:
+        store.bind_consumer(
+            "https://old.test",
+            configured.subscription_id,
+            configured.capture_table,
+            configured.artifact_prefix,
+        )
+    calls = []
+
+    class Hub:
+        def __init__(self, *_):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def session(self):
+            calls.append("session")
+
+        async def subscription(self):
+            calls.append("subscription")
+
+    monkeypatch.setattr("page_archiver.main.Settings", lambda: configured)
+    monkeypatch.setattr("page_archiver.main.HubClient", Hub)
+    assert main(["move-hub"]) == 0
+    assert calls == ["session", "subscription"]
+    assert json.loads(capsys.readouterr().out) == {"hub_url": configured.hub_url}
+    with Store(tmp_path) as store:
+        store.bind_consumer(
+            configured.hub_url,
+            configured.subscription_id,
+            configured.capture_table,
+            configured.artifact_prefix,
+        )

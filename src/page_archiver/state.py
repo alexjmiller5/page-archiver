@@ -411,6 +411,23 @@ class Store:
                 raise ValueError("consumer_configuration_changed")
             self.db.execute("INSERT OR IGNORE INTO consumer_identity VALUES (1,?)", (identity,))
 
+    def move_hub(self, hub_url, subscription_id, capture_table, artifact_prefix) -> None:
+        """Rebind durable work to a new URL of the same hub; every other part must match."""
+        with self.transaction():
+            previous = self.db.execute(
+                "SELECT configuration FROM consumer_identity WHERE id=1"
+            ).fetchone()
+            if previous and json.loads(previous[0])[1:] != [
+                subscription_id,
+                capture_table,
+                artifact_prefix,
+            ]:
+                raise ValueError("consumer_configuration_changed")
+            self.db.execute(
+                "INSERT OR REPLACE INTO consumer_identity VALUES (1,?)",
+                (encoded([hub_url, subscription_id, capture_table, artifact_prefix]),),
+            )
+
     def set_runtime(self, component: str, code: str) -> None:
         if (
             component not in {"intake", "worker", "backfill"}

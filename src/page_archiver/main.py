@@ -60,6 +60,10 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("watch", help="Run outbound intake and one capture worker")
     commands.add_parser("run-once", help="Accept available events and process one queued capture")
     commands.add_parser("backfill", help="Queue current URLs from subscription-selected columns")
+    commands.add_parser(
+        "move-hub",
+        help="Rebind local work to the configured hub URL after the same hub moved hostnames",
+    )
     retry_parser = commands.add_parser(
         "retry", help="Queue a new observation of a capture's current source"
     )
@@ -115,6 +119,17 @@ async def hub_command(args, settings):
             await hub.session()
             return await retrieve(hub, settings, args.attempt_id, args.output.absolute())
         with Store(settings.state_dir) as store:
+            if args.command == "move-hub":
+                # The same subscription answering there with this credential is the proof.
+                await hub.session()
+                await hub.subscription()
+                store.move_hub(
+                    settings.hub_url,
+                    settings.subscription_id,
+                    settings.capture_table,
+                    settings.artifact_prefix,
+                )
+                return {"hub_url": settings.hub_url}
             if args.command == "watch":
                 await retry_hub(hub.session, store, "intake")
             else:
