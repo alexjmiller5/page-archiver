@@ -1,6 +1,6 @@
 # Page Archiver design
 
-Page Archiver retains self-contained HTML and full-page PNG observations of public HTTP(S) pages. It is a generic consumer of a Life Data hub, using only the hub URL and its own restricted credential. Source mappings are operator state, never compiled application defaults. There is no analytics integration or public listener.
+Page Archiver retains self-contained HTML and full-page PNG observations of public HTTP(S) pages. It is a generic consumer of a Soma hub, using only the hub URL and its own restricted credential. Source mappings are operator state, never compiled application defaults. There is no analytics integration or public listener.
 
 The hub records exact selected old/new values atomically with accepted mutations. An outbound authenticated request holds for at most 30 seconds, returning a durable offered batch. The client persists every event, capture job and pending ACK receipt in a SQLite transaction before acknowledging the batch. Event plus source column identifies logical capture work. Lost responses and restarts must not lose or duplicate completed work.
 

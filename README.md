@@ -3,7 +3,7 @@
 Capture a public web page as self-contained HTML and a full-page PNG, with a
 manifest containing MIME types, byte counts and SHA-256 checksums. No analytics.
 
-The CLI supports individual captures and a durable outbound Life Data subscription
+The CLI supports individual captures and a durable outbound Soma subscription
 consumer. It stores a recoverable local queue and publishes immutable files plus
 capture metadata. Hub setup is described in [the contract](docs/hub-setup.md).
 The future capture viewer is separate work.

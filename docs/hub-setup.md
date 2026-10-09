@@ -3,16 +3,16 @@
 The hub must implement `row_api: v1`, `subscriptions: durable-pull-v1` and
 `files: opaque-key-v1`. Page Archiver is a direct API consumer; it never enrolls
 as a schema-replaying replica. The canonical protocol fixtures live in
-[Life Data](https://github.com/alexjmiller5/life-data/tree/main/tests/fixtures).
+[Soma](https://github.com/alexjmiller5/soma/tree/main/tests/fixtures).
 Check the hub session capabilities before connecting a production runner.
 
-An operator creates the table and catalog through the installed Life CLI,
+An operator creates the table and catalog through the installed Soma CLI,
 activates a subscription, and independently mints the consumer credential.
 The archiver never holds an administrator credential. The following names are
 examples; table names, sources and artifact prefix are runtime configuration.
 
 ```sh
-life table create captures \
+soma table create captures \
   'capture_id:text!' 'event_id:text!' 'subscription_id:text!' \
   'source_table:text!' 'source_row_id:text!' 'source_column:text!' \
   'source_url:text!' 'observed_source_revision:json!' \
@@ -21,12 +21,12 @@ life table create captures \
   'failure_code:text' 'failure_detail:text' \
   'html_key:text' 'html_mime:text' 'html_bytes:int' 'html_sha256:text' \
   'png_key:text' 'png_mime:text' 'png_bytes:int' 'png_sha256:text'
-life sql "CREATE UNIQUE INDEX captures_success_event_column ON captures(event_id,source_column) WHERE status='succeeded'"
-life sync
+soma sql "CREATE UNIQUE INDEX captures_success_event_column ON captures(event_id,source_column) WHERE status='succeeded'"
+soma sync
 ```
 
 Add the table's owner, purpose, consumers and column descriptions to the catalog
-using `life sql`, then refresh documentation with `life doc`. Its owner is Page
+using `soma sql`, then refresh documentation with `soma doc`. Its owner is Page
 Archiver; readers use the hub APIs. File keys are ordinary text. A future file
 catalog type or capture viewer is not required. Avoid enforced SQL rules,
 derivations, custom triggers and cross-table side effects on a table writable
@@ -35,7 +35,7 @@ by a restricted consumer. The hub fails closed on those unsafe write policies.
 The machine-readable [metadata fixture](../tests/fixtures/capture-metadata-v1.json)
 is checked against the publisher and gives exact success/failure fields.
 
-The Life table command supplies `id`, `created_at`, `updated_at`, `deleted_at`
+The Soma table command supplies `id`, `created_at`, `updated_at`, `deleted_at`
 and `hub_at`. The publisher supplies a stable attempt UUID as `id`; it never
 supplies `hub_at`. All submitted dates use UTC milliseconds ending in `Z`.
 
@@ -97,7 +97,7 @@ subscriptions:consume:<subscription-id>
 
 Mint that token through the hub's supported token interface and deliver it to
 the consumer's secure credential storage. It must not share another caller's
-credential. Revoking or rotating this token affects this consumer only. A Life
+credential. Revoking or rotating this token affects this consumer only. A Soma
 UI reader gets its own table and file read grants; table access grants no file
 access. A capture table shared across source tables requires explicit combined
 source access. Future restricted views need row-level source authorization.

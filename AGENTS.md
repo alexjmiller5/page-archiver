@@ -23,7 +23,7 @@ Coverage uses current source table/row/column/exact URL, preserves the best reta
 archive across later failures, and reads matching local pending work without queue
 creation or migration. Unavailable queue state is unknown, never zero. Metadata
 availability is distinct from verified artifact bytes and newest-revision coverage.
-Life Data is an approved shared service, accessed only through its supported row,
+Soma is an approved shared service, accessed only through its supported row,
 subscription and file APIs with an independently revocable consumer credential.
 It owns retained captures and metadata. Removal of this consumer preserves retained
 archives. No backing storage bindings, platform tokens or another app's credentials.
@@ -42,4 +42,4 @@ are not a runtime deployment.
 The generic architecture is docs/design.md; the consumer contract is docs/hub-setup.md.
 The runner plan is docs/superpowers/plans/2026-10-03-durable-runner.md. Hub changes
 use the hub's canonical fixtures and generated contracts. Do not pretend unfinished routes
-or a future Life UI viewer have shipped.
+or a future Iris viewer have shipped.
